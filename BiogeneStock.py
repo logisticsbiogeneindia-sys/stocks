@@ -106,6 +106,7 @@ check_github_auth()
 # GitHub Push Function
 # -------------------------
 def push_to_github(local_file, remote_path, commit_message="Update file"):
+    """Create or update file on GitHub."""
     try:
         with open(local_file, "rb") as f:
             content = base64.b64encode(f.read()).decode("utf-8")
@@ -188,9 +189,9 @@ else:
     xl = pd.ExcelFile(UPLOAD_PATH)
 
 # -------------------------
-# Allowed sheets
+# Tabs
 # -------------------------
-allowed_sheets = [s for s in ["Current Inventory", "Item Wise Current Inventory", "Dispatches", "MasterSheet"] if s in xl.sheet_names]
+allowed_sheets = [s for s in ["Current Inventory", "Item Wise Current Inventory", "Dispatches"] if s in xl.sheet_names]
 if not allowed_sheets:
     st.error("❌ No valid sheets found in file!")
 else:
@@ -199,12 +200,11 @@ else:
     st.success(f"✅ **{sheet_name}** Loaded Successfully!")
     check_col = find_column(df, ["Check", "Location", "Status", "Type", "StockType"])
 
-# -------------------------
-# Tabs: Inventory + OpenAI
-# -------------------------
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["🏠 Local", "🚚 Outstation", "📦 Other", "🔍 Search", "🤖 OpenAI Insights"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["🏠 Local", "🚚 Outstation", "📦 Other", "🔍 Search", "🤖 AI Query"])
 
-# ---------- Local/Outstation Tabs ----------
+# -------------------------
+# Local/Outstation/Other tabs
+# -------------------------
 if check_col and sheet_name != "Dispatches":
     check_vals = df[check_col].astype(str).str.strip().str.lower()
     with tab1:
@@ -217,18 +217,18 @@ if check_col and sheet_name != "Dispatches":
         st.subheader("📦 Other Inventory")
         st.dataframe(df[~check_vals.isin(["local", "outstation"])], use_container_width=True, height=600)
 else:
-    for t in [tab1, tab2, tab3]:
-        with t:
-            st.info("Local/Outstation tabs not applicable for this sheet.")
+    with tab1:
+        st.info("Local/Outstation tabs not applicable for this sheet.")
 
-# ---------- Search Tab ----------
+# -------------------------
+# Search Tab
+# -------------------------
 with tab4:
     st.subheader("🔍 Search Inventory")
     search_sheet = st.selectbox("Select sheet to search", allowed_sheets, index=0)
     search_df = xl.parse(search_sheet)
-    df_filtered = search_df.copy()
-    search_performed = False
 
+    # Columns
     item_col = find_column(search_df, ["Item Code", "ItemCode", "SKU", "Product Code"])
     customer_col = find_column(search_df, ["Customer Name", "CustomerName", "Customer", "CustName"])
     brand_col = find_column(search_df, ["Brand", "BrandName", "Product Brand", "Company"])
@@ -236,7 +236,9 @@ with tab4:
     awb_col = find_column(search_df, ["AWB", "AWB Number", "Tracking Number"])
     date_col = find_column(search_df, ["Date", "Dispatch Date", "Created On", "Order Date"])
 
-    # --- Current Inventory Search ---
+    df_filtered = search_df.copy()
+    search_performed = False
+
     if search_sheet == "Current Inventory":
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -256,103 +258,48 @@ with tab4:
             search_performed = True
             df_filtered = df_filtered[df_filtered[remarks_col].astype(str).str.contains(search_remarks, case=False, na=False)]
 
-    # --- Item Wise Inventory Search ---
-    elif search_sheet == "Item Wise Current Inventory":
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            search_item = st.text_input("Search by Item Code").strip()
-        with col2:
-            search_customer = st.text_input("Search by Customer Name").strip()
-        with col3:
-            search_brand = st.text_input("Search by Brand").strip()
-        with col4:
-            search_remarks = st.text_input("Search by Remarks").strip()
-
-        if search_item and item_col:
-            search_performed = True
-            df_filtered = df_filtered[df_filtered[item_col].astype(str).str.contains(search_item, case=False, na=False)]
-        if search_customer and customer_col:
-            search_performed = True
-            df_filtered = df_filtered[df_filtered[customer_col].astype(str).str.contains(search_customer, case=False, na=False)]
-        if search_brand and brand_col:
-            search_performed = True
-            df_filtered = df_filtered[df_filtered[brand_col].astype(str).str.contains(search_brand, case=False, na=False)]
-        if search_remarks and remarks_col:
-            search_performed = True
-            df_filtered = df_filtered[df_filtered[remarks_col].astype(str).str.contains(search_remarks, case=False, na=False)]
-
-    # --- Dispatches Search ---
-    elif search_sheet == "Dispatches":
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            date_range = st.date_input("Select Date Range", [])
-        with col2:
-            search_awb = st.text_input("Search by AWB Number").strip()
-        with col3:
-            search_customer = st.text_input("Search by Customer Name").strip()
-
-        if date_range and len(date_range) == 2 and date_col:
-            start, end = date_range
-            search_performed = True
-            df_filtered[date_col] = pd.to_datetime(df_filtered[date_col], errors="coerce")
-            df_filtered = df_filtered[(df_filtered[date_col] >= pd.to_datetime(start)) & (df_filtered[date_col] <= pd.to_datetime(end))]
-        if search_awb and awb_col:
-            search_performed = True
-            df_filtered = df_filtered[df_filtered[awb_col].astype(str).str.contains(search_awb, case=False, na=False)]
-        if search_customer and customer_col:
-            search_performed = True
-            df_filtered = df_filtered[df_filtered[customer_col].astype(str).str.contains(search_customer, case=False, na=False)]
-
+    # Display search results
     if search_performed:
         if df_filtered.empty:
             st.warning("No matching records found.")
         else:
             st.dataframe(df_filtered, use_container_width=True, height=600)
-            st.download_button(
-                label="⬇️ Download Filtered Data",
-                data=df_filtered.to_csv(index=False).encode("utf-8"),
-                file_name="filtered_inventory.csv",
-                mime="text/csv"
+
+# -------------------------
+# AI Query Tab
+# -------------------------
+openai.api_key = st.secrets["OPENAI_API_KEY"]
+
+with tab5:
+    st.subheader("🤖 Ask AI about your inventory")
+    user_question = st.text_input("Enter your question here:")
+
+    if user_question:
+        try:
+            df_ai = pd.read_excel(UPLOAD_PATH, sheet_name="Current Inventory")
+            csv_text = df_ai.head(100).to_csv(index=False)
+
+            prompt = f"""
+You are a helpful assistant. Answer questions based on the following inventory data:
+
+{csv_text}
+
+Question: {user_question}
+Answer:
+"""
+
+            response = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.2,
+                max_tokens=300
             )
 
-# ---------- OpenAI Insights Tab ----------
-with tab5:
-    st.subheader("🤖 OpenAI Insights")
-    user_query = st.text_area("Ask a question about MasterSheet", placeholder="Example: Show me top 10 items by stock")
+            answer = response['choices'][0]['message']['content']
+            st.success(answer)
 
-    if st.button("Get Insights") and user_query:
-        if "MasterSheet" in xl.sheet_names:
-            df_master = xl.parse("MasterSheet")
-            csv_data = df_master.to_csv(index=False)
-            prompt = f"""
-You are a data analyst. Analyze the following CSV data and answer the user's question clearly.
-CSV Data:
-{csv_data}
-
-User Question: {user_query}
-
-Please provide the answer in a clear tabular format if possible.
-"""
-            try:
-                openai.api_key = st.secrets["OPENAI_API_KEY"]  # Use API key from secrets
-                response = openai.ChatCompletion.create(
-                    model="gpt-4",
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0
-                )
-                answer = response['choices'][0]['message']['content']
-                st.markdown(answer, unsafe_allow_html=True)
-
-                st.download_button(
-                    label="⬇️ Download Insights",
-                    data=answer.encode("utf-8"),
-                    file_name="openai_insights.txt",
-                    mime="text/plain"
-                )
-            except Exception as e:
-                st.error(f"OpenAI API Error: {e}")
-        else:
-            st.warning("MasterSheet not found in Excel file.")
+        except Exception as e:
+            st.error(f"AI query failed: {e}")
 
 # -------------------------
 # Footer
