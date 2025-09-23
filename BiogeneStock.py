@@ -7,7 +7,7 @@ import pytz
 import requests
 import base64
 import io
-import openai
+from openai import OpenAI
 
 # -------------------------
 # Helpers
@@ -106,7 +106,6 @@ check_github_auth()
 # GitHub Push Function
 # -------------------------
 def push_to_github(local_file, remote_path, commit_message="Update file"):
-    """Create or update file on GitHub."""
     try:
         with open(local_file, "rb") as f:
             content = base64.b64encode(f.read()).decode("utf-8")
@@ -228,7 +227,6 @@ with tab4:
     search_sheet = st.selectbox("Select sheet to search", allowed_sheets, index=0)
     search_df = xl.parse(search_sheet)
 
-    # Columns
     item_col = find_column(search_df, ["Item Code", "ItemCode", "SKU", "Product Code"])
     customer_col = find_column(search_df, ["Customer Name", "CustomerName", "Customer", "CustName"])
     brand_col = find_column(search_df, ["Brand", "BrandName", "Product Brand", "Company"])
@@ -258,7 +256,6 @@ with tab4:
             search_performed = True
             df_filtered = df_filtered[df_filtered[remarks_col].astype(str).str.contains(search_remarks, case=False, na=False)]
 
-    # Display search results
     if search_performed:
         if df_filtered.empty:
             st.warning("No matching records found.")
@@ -268,7 +265,7 @@ with tab4:
 # -------------------------
 # AI Query Tab
 # -------------------------
-openai.api_key = st.secrets["OPENAI_API_KEY"]
+client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
 with tab5:
     st.subheader("🤖 Ask AI about your inventory")
@@ -288,14 +285,14 @@ Question: {user_question}
 Answer:
 """
 
-            response = openai.ChatCompletion.create(
+            response = client.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.2,
                 max_tokens=300
             )
 
-            answer = response['choices'][0]['message']['content']
+            answer = response.choices[0].message.content
             st.success(answer)
 
         except Exception as e:
