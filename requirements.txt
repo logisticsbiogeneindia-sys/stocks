@@ -1,0 +1,8 @@
+streamlit
+pandas
+openpyxl
+PyGithub
+requests
+pytz
+openai
+
