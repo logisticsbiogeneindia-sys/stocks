@@ -229,7 +229,6 @@ with tab4:
     df_filtered = search_df.copy()
     search_performed = False
 
-    # --- Define columns ---
     item_col = find_column(search_df, ["Item Code", "ItemCode", "SKU", "Product Code"])
     customer_col = find_column(search_df, ["Customer Name", "CustomerName", "Customer", "CustName"])
     brand_col = find_column(search_df, ["Brand", "BrandName", "Product Brand", "Company"])
@@ -237,6 +236,7 @@ with tab4:
     awb_col = find_column(search_df, ["AWB", "AWB Number", "Tracking Number"])
     date_col = find_column(search_df, ["Date", "Dispatch Date", "Created On", "Order Date"])
 
+    # --- Current Inventory Search ---
     if search_sheet == "Current Inventory":
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -256,6 +256,7 @@ with tab4:
             search_performed = True
             df_filtered = df_filtered[df_filtered[remarks_col].astype(str).str.contains(search_remarks, case=False, na=False)]
 
+    # --- Item Wise Inventory Search ---
     elif search_sheet == "Item Wise Current Inventory":
         col1, col2, col3, col4 = st.columns(4)
         with col1:
@@ -280,6 +281,7 @@ with tab4:
             search_performed = True
             df_filtered = df_filtered[df_filtered[remarks_col].astype(str).str.contains(search_remarks, case=False, na=False)]
 
+    # --- Dispatches Search ---
     elif search_sheet == "Dispatches":
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -306,7 +308,6 @@ with tab4:
             st.warning("No matching records found.")
         else:
             st.dataframe(df_filtered, use_container_width=True, height=600)
-            # Download filtered data
             st.download_button(
                 label="⬇️ Download Filtered Data",
                 data=df_filtered.to_csv(index=False).encode("utf-8"),
@@ -317,10 +318,9 @@ with tab4:
 # ---------- OpenAI Insights Tab ----------
 with tab5:
     st.subheader("🤖 OpenAI Insights")
-    openai_api_key = st.text_input("Enter OpenAI API Key", type="password", key="openai_key")
     user_query = st.text_area("Ask a question about MasterSheet", placeholder="Example: Show me top 10 items by stock")
 
-    if st.button("Get Insights") and openai_api_key and user_query:
+    if st.button("Get Insights") and user_query:
         if "MasterSheet" in xl.sheet_names:
             df_master = xl.parse("MasterSheet")
             csv_data = df_master.to_csv(index=False)
@@ -334,7 +334,7 @@ User Question: {user_query}
 Please provide the answer in a clear tabular format if possible.
 """
             try:
-                openai.api_key = openai_api_key
+                openai.api_key = st.secrets["OPENAI_API_KEY"]  # Use API key from secrets
                 response = openai.ChatCompletion.create(
                     model="gpt-4",
                     messages=[{"role": "user", "content": prompt}],
@@ -343,7 +343,6 @@ Please provide the answer in a clear tabular format if possible.
                 answer = response['choices'][0]['message']['content']
                 st.markdown(answer, unsafe_allow_html=True)
 
-                # Download button
                 st.download_button(
                     label="⬇️ Download Insights",
                     data=answer.encode("utf-8"),
