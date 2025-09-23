@@ -7,6 +7,7 @@ import pytz
 import requests
 import base64
 import io
+import openai
 
 # -------------------------
 # Helpers
@@ -105,7 +106,6 @@ check_github_auth()
 # GitHub Push Function
 # -------------------------
 def push_to_github(local_file, remote_path, commit_message="Update file"):
-    """Create or update file on GitHub."""
     try:
         with open(local_file, "rb") as f:
             content = base64.b64encode(f.read()).decode("utf-8")
@@ -190,7 +190,7 @@ else:
 # -------------------------
 # Allowed sheets
 # -------------------------
-allowed_sheets = [s for s in ["Current Inventory", "Item Wise Current Inventory", "Dispatches"] if s in xl.sheet_names]
+allowed_sheets = [s for s in ["Current Inventory", "Item Wise Current Inventory", "Dispatches", "MasterSheet"] if s in xl.sheet_names]
 if not allowed_sheets:
     st.error("❌ No valid sheets found in file!")
 else:
@@ -199,8 +199,12 @@ else:
     st.success(f"✅ **{sheet_name}** Loaded Successfully!")
     check_col = find_column(df, ["Check", "Location", "Status", "Type", "StockType"])
 
-tab1, tab2, tab3, tab4 = st.tabs(["🏠 Local", "🚚 Outstation", "📦 Other", "🔍 Search"])
+# -------------------------
+# Tabs: Inventory + OpenAI
+# -------------------------
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["🏠 Local", "🚚 Outstation", "📦 Other", "🔍 Search", "🤖 OpenAI Insights"])
 
+# ---------- Local/Outstation Tabs ----------
 if check_col and sheet_name != "Dispatches":
     check_vals = df[check_col].astype(str).str.strip().str.lower()
     with tab1:
@@ -213,27 +217,25 @@ if check_col and sheet_name != "Dispatches":
         st.subheader("📦 Other Inventory")
         st.dataframe(df[~check_vals.isin(["local", "outstation"])], use_container_width=True, height=600)
 else:
-    with tab1:
-        st.info("Local/Outstation tabs not applicable for this sheet.")
+    for t in [tab1, tab2, tab3]:
+        with t:
+            st.info("Local/Outstation tabs not applicable for this sheet.")
 
-# -------------------------
-# Search Tab
-# -------------------------
+# ---------- Search Tab ----------
 with tab4:
     st.subheader("🔍 Search Inventory")
     search_sheet = st.selectbox("Select sheet to search", allowed_sheets, index=0)
     search_df = xl.parse(search_sheet)
+    df_filtered = search_df.copy()
+    search_performed = False
 
-    # Columns
+    # --- Define columns ---
     item_col = find_column(search_df, ["Item Code", "ItemCode", "SKU", "Product Code"])
     customer_col = find_column(search_df, ["Customer Name", "CustomerName", "Customer", "CustName"])
     brand_col = find_column(search_df, ["Brand", "BrandName", "Product Brand", "Company"])
     remarks_col = find_column(search_df, ["Remarks", "Remark", "Notes", "Comments"])
     awb_col = find_column(search_df, ["AWB", "AWB Number", "Tracking Number"])
     date_col = find_column(search_df, ["Date", "Dispatch Date", "Created On", "Order Date"])
-
-    df_filtered = search_df.copy()
-    search_performed = False
 
     if search_sheet == "Current Inventory":
         col1, col2, col3 = st.columns(3)
@@ -304,6 +306,54 @@ with tab4:
             st.warning("No matching records found.")
         else:
             st.dataframe(df_filtered, use_container_width=True, height=600)
+            # Download filtered data
+            st.download_button(
+                label="⬇️ Download Filtered Data",
+                data=df_filtered.to_csv(index=False).encode("utf-8"),
+                file_name="filtered_inventory.csv",
+                mime="text/csv"
+            )
+
+# ---------- OpenAI Insights Tab ----------
+with tab5:
+    st.subheader("🤖 OpenAI Insights")
+    openai_api_key = st.text_input("Enter OpenAI API Key", type="password", key="openai_key")
+    user_query = st.text_area("Ask a question about MasterSheet", placeholder="Example: Show me top 10 items by stock")
+
+    if st.button("Get Insights") and openai_api_key and user_query:
+        if "MasterSheet" in xl.sheet_names:
+            df_master = xl.parse("MasterSheet")
+            csv_data = df_master.to_csv(index=False)
+            prompt = f"""
+You are a data analyst. Analyze the following CSV data and answer the user's question clearly.
+CSV Data:
+{csv_data}
+
+User Question: {user_query}
+
+Please provide the answer in a clear tabular format if possible.
+"""
+            try:
+                openai.api_key = openai_api_key
+                response = openai.ChatCompletion.create(
+                    model="gpt-4",
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0
+                )
+                answer = response['choices'][0]['message']['content']
+                st.markdown(answer, unsafe_allow_html=True)
+
+                # Download button
+                st.download_button(
+                    label="⬇️ Download Insights",
+                    data=answer.encode("utf-8"),
+                    file_name="openai_insights.txt",
+                    mime="text/plain"
+                )
+            except Exception as e:
+                st.error(f"OpenAI API Error: {e}")
+        else:
+            st.warning("MasterSheet not found in Excel file.")
 
 # -------------------------
 # Footer
