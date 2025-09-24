@@ -190,7 +190,7 @@ else:
 # -------------------------
 # Allowed sheets
 # -------------------------
-allowed_sheets = [s for s in ["Current Inventory", "Item Wise Current Inventory", "Dispatches"] if s in xl.sheet_names]
+allowed_sheets = [s for s in ["Current Inventory", "Item Wise Current Inventory", "Dispatches","Mastersheet"] if s in xl.sheet_names]
 if not allowed_sheets:
     st.error("❌ No valid sheets found in file!")
 else:
@@ -201,7 +201,7 @@ else:
 
 tab1, tab2, tab3, tab4 = st.tabs(["🏠 Local", "🚚 Outstation", "📦 Other", "🔍 Search"])
 
-if check_col and sheet_name != "Dispatches":
+if check_col and sheet_name != "Dispatches", "Mastersheet":
     check_vals = df[check_col].astype(str).str.strip().str.lower()
     with tab1:
         st.subheader("🏠 Local Inventory")
@@ -313,3 +313,4 @@ st.markdown("""
     © 2025 Biogene India | Created By Mohit Sharma
 </div>
 """, unsafe_allow_html=True)
+
