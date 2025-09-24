@@ -1,1 +1,2 @@
-web: python Biogenestock.py
+web: streamlit run Biogenestock.py
+
