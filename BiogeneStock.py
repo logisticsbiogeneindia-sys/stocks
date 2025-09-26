@@ -229,6 +229,7 @@ with tab4:
     customer_col = find_column(search_df, ["Customer Name", "CustomerName", "Customer", "CustName"])
     brand_col = find_column(search_df, ["Brand", "BrandName", "Product Brand", "Company"])
     remarks_col = find_column(search_df, ["Remarks", "Remark", "Notes", "Comments"])
+    description_col = find_column(search_df, ["Item Description", "Description", "ItemDesc", "Product Description"])  # <-- Add this line to find item description column
     awb_col = find_column(search_df, ["AWB", "AWB Number", "Tracking Number"])
     date_col = find_column(search_df, ["Date", "Dispatch Date", "Created On", "Order Date"])
 
@@ -277,6 +278,21 @@ with tab4:
         if search_remarks and remarks_col:
             search_performed = True
             df_filtered = df_filtered[df_filtered[remarks_col].astype(str).str.contains(search_remarks, case=False, na=False)]
+        
+        # Search by Item Description
+        if description_col:
+            search_description = st.text_input("Search by Item Description", key="description_search").strip()
+
+            # Provide search suggestions while typing
+            if search_description:
+                suggestions = df_filtered[description_col].dropna().astype(str).str.contains(search_description, case=False, na=False)
+                suggested_items = df_filtered[suggestions][description_col].unique()
+                if suggested_items.size > 0:
+                    st.write("Suggestions: ", ", ".join(suggested_items[:10]))  # Show top 10 matches for suggestions
+
+                # Filter results based on the search description
+                search_performed = True
+                df_filtered = df_filtered[suggestions]
 
     elif search_sheet == "Dispatches":
         col1, col2, col3 = st.columns(3)
@@ -304,6 +320,7 @@ with tab4:
             st.warning("No matching records found.")
         else:
             st.dataframe(df_filtered, use_container_width=True, height=600)
+
 
 # -------------------------
 # Footer
