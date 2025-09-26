@@ -219,6 +219,7 @@ else:
 # -------------------------
 # Search Tab
 # -------------------------
+
 with tab4:
     st.subheader("🔍 Search Inventory")
     search_sheet = st.selectbox("Select sheet to search", allowed_sheets, index=0)
@@ -229,7 +230,7 @@ with tab4:
     customer_col = find_column(search_df, ["Customer Name", "CustomerName", "Customer", "CustName"])
     brand_col = find_column(search_df, ["Brand", "BrandName", "Product Brand", "Company"])
     remarks_col = find_column(search_df, ["Remarks", "Remark", "Notes", "Comments"])
-    description_col = find_column(search_df, ["Item Description", "Description", "ItemDesc", "Product Description"])  # <-- Add this line to find item description column
+    description_col = find_column(search_df, ["Item Discription", "Description", "ItemDesc", "Product Description"])  # <-- Updated to 'Item Discription'
     awb_col = find_column(search_df, ["AWB", "AWB Number", "Tracking Number"])
     date_col = find_column(search_df, ["Date", "Dispatch Date", "Created On", "Order Date"])
 
@@ -279,7 +280,7 @@ with tab4:
             search_performed = True
             df_filtered = df_filtered[df_filtered[remarks_col].astype(str).str.contains(search_remarks, case=False, na=False)]
         
-        # Search by Item Description
+        # Search by Item Description (Updated to Item Discription)
         if description_col:
             search_description = st.text_input("Search by Item Description", key="description_search").strip()
 
