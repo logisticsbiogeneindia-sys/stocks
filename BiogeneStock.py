@@ -27,14 +27,6 @@ def find_column(df: pd.DataFrame, candidates: list) -> str | None:
                 return orig
     return None
 
-def show_suggestions(df, col, search_value, max_suggestions=5):
-    """Show matching suggestions under input box"""
-    if col and search_value:
-        unique_vals = df[col].dropna().astype(str).unique()
-        matches = [v for v in unique_vals if search_value.lower() in v.lower()]
-        if matches:
-            st.caption("Suggestions: " + ", ".join(matches[:max_suggestions]))
-
 # -------------------------
 # Config & Styling
 # -------------------------
@@ -248,13 +240,10 @@ with tab4:
         col1, col2, col3 = st.columns(3)
         with col1:
             search_customer = st.text_input("Search by Customer Name").strip()
-            show_suggestions(search_df, customer_col, search_customer)
         with col2:
             search_brand = st.text_input("Search by Brand").strip()
-            show_suggestions(search_df, brand_col, search_brand)
         with col3:
             search_remarks = st.text_input("Search by Remarks").strip()
-            show_suggestions(search_df, remarks_col, search_remarks)
 
         if search_customer and customer_col:
             search_performed = True
@@ -270,19 +259,21 @@ with tab4:
         col1, col2, col3, col4, col5 = st.columns(5)
         with col1:
             search_item = st.text_input("Search by Item Code").strip()
-            show_suggestions(search_df, item_col, search_item)
-        with col2:
+        with col5:
             search_customer = st.text_input("Search by Customer Name").strip()
-            show_suggestions(search_df, customer_col, search_customer)
         with col3:
             search_brand = st.text_input("Search by Brand").strip()
-            show_suggestions(search_df, brand_col, search_brand)
         with col4:
             search_remarks = st.text_input("Search by Remarks").strip()
-            show_suggestions(search_df, remarks_col, search_remarks)
-        with col5:
-            search_desc = st.text_input("Search by Description").strip()
-            show_suggestions(search_df, desc_col, search_desc)
+        with col2:
+            if desc_col:
+                search_desc = st.selectbox(
+                    "Search by Description",
+                    options=[""] + sorted(search_df[desc_col].dropna().unique().astype(str)),
+                    index=0
+                )
+            else:
+                search_desc = ""
 
         if search_item and item_col:
             search_performed = True
@@ -306,10 +297,8 @@ with tab4:
             date_range = st.date_input("Select Date Range", [])
         with col2:
             search_awb = st.text_input("Search by AWB Number").strip()
-            show_suggestions(search_df, awb_col, search_awb)
         with col3:
             search_customer = st.text_input("Search by Customer Name").strip()
-            show_suggestions(search_df, customer_col, search_customer)
 
         if date_range and len(date_range) == 2 and date_col:
             start, end = date_range
