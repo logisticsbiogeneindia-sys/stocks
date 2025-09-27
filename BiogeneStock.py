@@ -259,13 +259,13 @@ with tab4:
         col1, col2, col3, col4, col5 = st.columns(5)
         with col1:
             search_item = st.text_input("Search by Item Code").strip()
-        with col2:
+        with col5:
             search_customer = st.text_input("Search by Customer Name").strip()
         with col3:
             search_brand = st.text_input("Search by Brand").strip()
         with col4:
             search_remarks = st.text_input("Search by Remarks").strip()
-        with col5:
+        with col2:
             if desc_col:
                 search_desc = st.selectbox(
                     "Search by Description",
