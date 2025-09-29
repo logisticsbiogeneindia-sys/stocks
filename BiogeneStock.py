@@ -63,7 +63,7 @@ st.markdown(f"""
 st.sidebar.header("⚙️ Settings")
 inventory_type = st.sidebar.selectbox("Choose Inventory Type", ["Current Inventory", "Item Wise Current Inventory"])
 password = st.sidebar.text_input("Enter Password to Upload/Download File", type="password")
-correct_password = "426344"
+correct_password = st.secrets["PASSWORD"]  # Storing password in Streamlit secrets
 
 UPLOAD_PATH = "Master-Stock Sheet Original.xlsx"
 TIMESTAMP_PATH = "timestamp.txt"
@@ -105,7 +105,6 @@ check_github_auth()
 # GitHub Push Function
 # -------------------------
 def push_to_github(local_file, remote_path, commit_message="Update file"):
-    """Create or update file on GitHub."""
     try:
         with open(local_file, "rb") as f:
             content = base64.b64encode(f.read()).decode("utf-8")
@@ -145,20 +144,20 @@ st.markdown(f"🕒 **Last Updated (from GitHub):** {github_timestamp}")
 # -------------------------
 if password == correct_password:
     uploaded_file = st.sidebar.file_uploader("Upload Excel File", type=["xlsx", "xls"])
+
     if uploaded_file is not None:
-        with open(UPLOAD_PATH, "wb") as f:
-            f.write(uploaded_file.getbuffer())
+        with st.spinner("Uploading file..."):
+            with open(UPLOAD_PATH, "wb") as f:
+                f.write(uploaded_file.getbuffer())
+            
+            timezone = pytz.timezone("Asia/Kolkata")
+            upload_time = datetime.now(timezone).strftime("%d-%m-%Y %H:%M:%S")
+            save_timestamp(upload_time)
+            save_uploaded_filename(uploaded_file.name)
 
-        timezone = pytz.timezone("Asia/Kolkata")
-        upload_time = datetime.now(timezone).strftime("%d-%m-%Y %H:%M:%S")
-        save_timestamp(upload_time)
-        save_uploaded_filename(uploaded_file.name)
-
-        st.sidebar.success(f"✅ File uploaded at {upload_time}")
-
-        # Push Excel and timestamp to GitHub
-        push_to_github(UPLOAD_PATH, "Master-Stock Sheet Original.xlsx", commit_message=f"Uploaded {uploaded_file.name}")
-        push_to_github(TIMESTAMP_PATH, "timestamp.txt", commit_message="Updated timestamp")
+            st.sidebar.success(f"✅ File uploaded at {upload_time}")
+            push_to_github(UPLOAD_PATH, "Master-Stock Sheet Original.xlsx", commit_message=f"Uploaded {uploaded_file.name}")
+            push_to_github(TIMESTAMP_PATH, "timestamp.txt", commit_message="Updated timestamp")
 
     if os.path.exists(UPLOAD_PATH):
         with open(UPLOAD_PATH, "rb") as f:
@@ -175,12 +174,15 @@ else:
 # -------------------------
 # Load Excel
 # -------------------------
-if not os.path.exists(UPLOAD_PATH):
+@st.cache_data
+def load_data_from_github():
     url = f"https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/{UPLOAD_PATH.replace(' ', '%20')}"
+    r = requests.get(url)
+    return pd.ExcelFile(io.BytesIO(r.content))
+
+if not os.path.exists(UPLOAD_PATH):
     try:
-        r = requests.get(url)
-        r.raise_for_status()
-        xl = pd.ExcelFile(io.BytesIO(r.content))
+        xl = load_data_from_github()
     except Exception as e:
         st.error(f"❌ Error loading Excel from GitHub: {e}")
         st.stop()
@@ -214,7 +216,11 @@ if check_col and sheet_name != "Dispatches":
         st.dataframe(df[~check_vals.isin(["local", "outstation"])], use_container_width=True, height=600)
 else:
     with tab1:
-        st.info("Local/Outstation tabs not applicable for this sheet.")
+        st.subheader("📄 No Inventory Data")
+        st.warning("There is no 'Check' column found in the data.")
+    with tab2:
+        st.subheader("📄 No Dispatch Data")
+        st.warning("Please check your inventory for errors or missing columns.")
 
 # -------------------------
 # Search Tab
@@ -231,7 +237,6 @@ with tab4:
     remarks_col = find_column(search_df, ["Remarks", "Remark", "Notes", "Comments"])
     awb_col = find_column(search_df, ["AWB", "AWB Number", "Tracking Number"])
     date_col = find_column(search_df, ["Date", "Dispatch Date", "Created On", "Order Date"])
-    desc_col = find_column(search_df, ["Item Discription", "Description", "Item Description"])
 
     df_filtered = search_df.copy()
     search_performed = False
@@ -256,24 +261,15 @@ with tab4:
             df_filtered = df_filtered[df_filtered[remarks_col].astype(str).str.contains(search_remarks, case=False, na=False)]
 
     elif search_sheet == "Item Wise Current Inventory":
-        col1, col2, col3, col4, col5 = st.columns(5)
+        col1, col2, col3, col4 = st.columns(4)
         with col1:
             search_item = st.text_input("Search by Item Code").strip()
-        with col5:
+        with col2:
             search_customer = st.text_input("Search by Customer Name").strip()
         with col3:
             search_brand = st.text_input("Search by Brand").strip()
         with col4:
             search_remarks = st.text_input("Search by Remarks").strip()
-        with col2:
-            if desc_col:
-                search_desc = st.selectbox(
-                    "Search by Description",
-                    options=[""] + sorted(search_df[desc_col].dropna().unique().astype(str)),
-                    index=0
-                )
-            else:
-                search_desc = ""
 
         if search_item and item_col:
             search_performed = True
@@ -287,9 +283,6 @@ with tab4:
         if search_remarks and remarks_col:
             search_performed = True
             df_filtered = df_filtered[df_filtered[remarks_col].astype(str).str.contains(search_remarks, case=False, na=False)]
-        if search_desc and desc_col:
-            search_performed = True
-            df_filtered = df_filtered[df_filtered[desc_col].astype(str).str.contains(search_desc, case=False, na=False)]
 
     elif search_sheet == "Dispatches":
         col1, col2, col3 = st.columns(3)
