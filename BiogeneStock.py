@@ -7,7 +7,6 @@ import pytz
 import requests
 import base64
 import io
-from fuzzywuzzy import fuzz, process
 
 # -------------------------
 # Helpers
@@ -15,15 +14,18 @@ from fuzzywuzzy import fuzz, process
 def normalize(s: str) -> str:
     return re.sub(r'[^a-z0-9]', '', str(s).lower())
 
-def find_column_fuzzy(df: pd.DataFrame, candidates: list) -> str | None:
+def find_column(df: pd.DataFrame, candidates: list) -> str | None:
     norm_map = {normalize(col): col for col in df.columns}
-    matches = {}
     for cand in candidates:
         key = normalize(cand)
-        match = process.extractOne(key, norm_map.keys(), scorer=fuzz.partial_ratio)
-        if match and match[1] >= 80:  # 80% similarity threshold
-            matches[cand] = norm_map[match[0]]
-    return matches.get(candidates[0])
+        if key in norm_map:
+            return norm_map[key]
+    for cand in candidates:
+        key = normalize(cand)
+        for norm_col, orig in norm_map.items():
+            if key in norm_col or norm_col in key:
+                return orig
+    return None
 
 # -------------------------
 # Config & Styling
@@ -141,30 +143,30 @@ st.markdown(f"🕒 **Last Updated (from GitHub):** {github_timestamp}")
 # Upload & Download Section
 # -------------------------
 if password == correct_password:
-    try:
-        uploaded_file = st.sidebar.file_uploader("Upload Excel File", type=["xlsx", "xls"], max_size=10*1024*1024)  # Max size 10MB
+    uploaded_file = st.sidebar.file_uploader("Upload Excel File", type=["xlsx", "xls"])
 
-        if uploaded_file is not None:
-            # Check file type
-            file_extension = uploaded_file.name.split(".")[-1].lower()
-            if file_extension not in ["xlsx", "xls"]:
-                st.sidebar.error("❌ Please upload a valid Excel file (xlsx or xls).")
-            else:
-                with st.spinner("Uploading file..."):
-                    with open(UPLOAD_PATH, "wb") as f:
-                        f.write(uploaded_file.getbuffer())
-                    
-                    timezone = pytz.timezone("Asia/Kolkata")
-                    upload_time = datetime.now(timezone).strftime("%d-%m-%Y %H:%M:%S")
-                    save_timestamp(upload_time)
-                    save_uploaded_filename(uploaded_file.name)
+    if uploaded_file is not None:
+        with st.spinner("Uploading file..."):
+            with open(UPLOAD_PATH, "wb") as f:
+                f.write(uploaded_file.getbuffer())
+            
+            timezone = pytz.timezone("Asia/Kolkata")
+            upload_time = datetime.now(timezone).strftime("%d-%m-%Y %H:%M:%S")
+            save_timestamp(upload_time)
+            save_uploaded_filename(uploaded_file.name)
 
-                    st.sidebar.success(f"✅ File uploaded at {upload_time}")
-                    push_to_github(UPLOAD_PATH, "Master-Stock Sheet Original.xlsx", commit_message=f"Uploaded {uploaded_file.name}")
-                    push_to_github(TIMESTAMP_PATH, "timestamp.txt", commit_message="Updated timestamp")
+            st.sidebar.success(f"✅ File uploaded at {upload_time}")
+            push_to_github(UPLOAD_PATH, "Master-Stock Sheet Original.xlsx", commit_message=f"Uploaded {uploaded_file.name}")
+            push_to_github(TIMESTAMP_PATH, "timestamp.txt", commit_message="Updated timestamp")
 
-    except Exception as e:
-        st.sidebar.error(f"❌ An error occurred during file upload: {e}")
+    if os.path.exists(UPLOAD_PATH):
+        with open(UPLOAD_PATH, "rb") as f:
+            st.sidebar.download_button(
+                label="⬇️ Download Uploaded Excel File",
+                data=f,
+                file_name=load_uploaded_filename(),
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
 else:
     if password:
         st.sidebar.error("❌ Incorrect password!")
@@ -197,7 +199,7 @@ else:
     sheet_name = inventory_type
     df = xl.parse(sheet_name)
     st.success(f"✅ **{sheet_name}** Loaded Successfully!")
-    check_col = find_column_fuzzy(df, ["Check", "Location", "Status", "Type", "StockType"])
+    check_col = find_column(df, ["Check", "Location", "Status", "Type", "StockType"])
 
 tab1, tab2, tab3, tab4 = st.tabs(["🏠 Local", "🚚 Outstation", "📦 Other", "🔍 Search"])
 
@@ -229,12 +231,12 @@ with tab4:
     search_df = xl.parse(search_sheet)
 
     # Columns
-    item_col = find_column_fuzzy(search_df, ["Item Code", "ItemCode", "SKU", "Product Code"])
-    customer_col = find_column_fuzzy(search_df, ["Customer Name", "CustomerName", "Customer", "CustName"])
-    brand_col = find_column_fuzzy(search_df, ["Brand", "BrandName", "Product Brand", "Company"])
-    remarks_col = find_column_fuzzy(search_df, ["Remarks", "Remark", "Notes", "Comments"])
-    awb_col = find_column_fuzzy(search_df, ["AWB", "AWB Number", "Tracking Number"])
-    date_col = find_column_fuzzy(search_df, ["Date", "Dispatch Date", "Created On", "Order Date"])
+    item_col = find_column(search_df, ["Item Code", "ItemCode", "SKU", "Product Code"])
+    customer_col = find_column(search_df, ["Customer Name", "CustomerName", "Customer", "CustName"])
+    brand_col = find_column(search_df, ["Brand", "BrandName", "Product Brand", "Company"])
+    remarks_col = find_column(search_df, ["Remarks", "Remark", "Notes", "Comments"])
+    awb_col = find_column(search_df, ["AWB", "AWB Number", "Tracking Number"])
+    date_col = find_column(search_df, ["Date", "Dispatch Date", "Created On", "Order Date"])
 
     df_filtered = search_df.copy()
     search_performed = False
