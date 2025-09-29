@@ -7,6 +7,7 @@ import pytz
 import requests
 import base64
 import io
+from fuzzywuzzy import process  # Fuzzy matching for columns
 
 # -------------------------
 # Helpers
@@ -14,17 +15,13 @@ import io
 def normalize(s: str) -> str:
     return re.sub(r'[^a-z0-9]', '', str(s).lower())
 
-def find_column(df: pd.DataFrame, candidates: list) -> str | None:
+def find_column_fuzzy(df: pd.DataFrame, candidates: list) -> str | None:
     norm_map = {normalize(col): col for col in df.columns}
     for cand in candidates:
         key = normalize(cand)
-        if key in norm_map:
-            return norm_map[key]
-    for cand in candidates:
-        key = normalize(cand)
-        for norm_col, orig in norm_map.items():
-            if key in norm_col or norm_col in key:
-                return orig
+        match = process.extractOne(key, norm_map.keys())
+        if match and match[1] > 80:  # 80 is the match threshold
+            return norm_map[match[0]]
     return None
 
 # -------------------------
@@ -143,7 +140,7 @@ st.markdown(f"🕒 **Last Updated (from GitHub):** {github_timestamp}")
 # Upload & Download Section
 # -------------------------
 if password == correct_password:
-    uploaded_file = st.sidebar.file_uploader("Upload Excel File", type=["xlsx", "xls"])
+    uploaded_file = st.sidebar.file_uploader("Upload Excel File", type=["xlsx", "xls"], max_size=10*1024*1024)  # Max size 10MB
 
     if uploaded_file is not None:
         with st.spinner("Uploading file..."):
@@ -174,7 +171,7 @@ else:
 # -------------------------
 # Load Excel
 # -------------------------
-@st.cache_data
+@st.cache_data(ttl=600)  # Cache for 10 minutes
 def load_data_from_github():
     url = f"https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/{UPLOAD_PATH.replace(' ', '%20')}"
     r = requests.get(url)
@@ -199,7 +196,7 @@ else:
     sheet_name = inventory_type
     df = xl.parse(sheet_name)
     st.success(f"✅ **{sheet_name}** Loaded Successfully!")
-    check_col = find_column(df, ["Check", "Location", "Status", "Type", "StockType"])
+    check_col = find_column_fuzzy(df, ["Check", "Location", "Status", "Type", "StockType"])
 
 tab1, tab2, tab3, tab4 = st.tabs(["🏠 Local", "🚚 Outstation", "📦 Other", "🔍 Search"])
 
@@ -220,7 +217,7 @@ else:
         st.warning("There is no 'Check' column found in the data.")
     with tab2:
         st.subheader("📄 No Dispatch Data")
-        st.warning("Please check your inventory for errors or missing columns.")
+        st.warning("Please check the dispatches sheet for further details.")
 
 # -------------------------
 # Search Tab
@@ -231,12 +228,12 @@ with tab4:
     search_df = xl.parse(search_sheet)
 
     # Columns
-    item_col = find_column(search_df, ["Item Code", "ItemCode", "SKU", "Product Code"])
-    customer_col = find_column(search_df, ["Customer Name", "CustomerName", "Customer", "CustName"])
-    brand_col = find_column(search_df, ["Brand", "BrandName", "Product Brand", "Company"])
-    remarks_col = find_column(search_df, ["Remarks", "Remark", "Notes", "Comments"])
-    awb_col = find_column(search_df, ["AWB", "AWB Number", "Tracking Number"])
-    date_col = find_column(search_df, ["Date", "Dispatch Date", "Created On", "Order Date"])
+    item_col = find_column_fuzzy(search_df, ["Item Code", "ItemCode", "SKU", "Product Code"])
+    customer_col = find_column_fuzzy(search_df, ["Customer Name", "CustomerName", "Customer", "CustName"])
+    brand_col = find_column_fuzzy(search_df, ["Brand", "BrandName", "Product Brand", "Company"])
+    remarks_col = find_column_fuzzy(search_df, ["Remarks", "Remark", "Notes", "Comments"])
+    awb_col = find_column_fuzzy(search_df, ["AWB", "AWB Number", "Tracking Number"])
+    date_col = find_column_fuzzy(search_df, ["Date", "Dispatch Date", "Created On", "Order Date"])
 
     df_filtered = search_df.copy()
     search_performed = False
