@@ -5,4 +5,6 @@ PyGithub
 requests
 pytz
 openai
+fuzzywuzzy
+
 
