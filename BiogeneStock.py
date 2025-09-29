@@ -7,7 +7,7 @@ import pytz
 import requests
 import base64
 import io
-from fuzzywuzzy import process  # Fuzzy matching for columns
+from fuzzywuzzy import fuzz, process
 
 # -------------------------
 # Helpers
@@ -17,12 +17,13 @@ def normalize(s: str) -> str:
 
 def find_column_fuzzy(df: pd.DataFrame, candidates: list) -> str | None:
     norm_map = {normalize(col): col for col in df.columns}
+    matches = {}
     for cand in candidates:
         key = normalize(cand)
-        match = process.extractOne(key, norm_map.keys())
-        if match and match[1] > 80:  # 80 is the match threshold
-            return norm_map[match[0]]
-    return None
+        match = process.extractOne(key, norm_map.keys(), scorer=fuzz.partial_ratio)
+        if match and match[1] >= 80:  # 80% similarity threshold
+            matches[cand] = norm_map[match[0]]
+    return matches.get(candidates[0])
 
 # -------------------------
 # Config & Styling
@@ -140,30 +141,30 @@ st.markdown(f"🕒 **Last Updated (from GitHub):** {github_timestamp}")
 # Upload & Download Section
 # -------------------------
 if password == correct_password:
-    uploaded_file = st.sidebar.file_uploader("Upload Excel File", type=["xlsx", "xls"], max_size=10*1024*1024)  # Max size 10MB
+    try:
+        uploaded_file = st.sidebar.file_uploader("Upload Excel File", type=["xlsx", "xls"], max_size=10*1024*1024)  # Max size 10MB
 
-    if uploaded_file is not None:
-        with st.spinner("Uploading file..."):
-            with open(UPLOAD_PATH, "wb") as f:
-                f.write(uploaded_file.getbuffer())
-            
-            timezone = pytz.timezone("Asia/Kolkata")
-            upload_time = datetime.now(timezone).strftime("%d-%m-%Y %H:%M:%S")
-            save_timestamp(upload_time)
-            save_uploaded_filename(uploaded_file.name)
+        if uploaded_file is not None:
+            # Check file type
+            file_extension = uploaded_file.name.split(".")[-1].lower()
+            if file_extension not in ["xlsx", "xls"]:
+                st.sidebar.error("❌ Please upload a valid Excel file (xlsx or xls).")
+            else:
+                with st.spinner("Uploading file..."):
+                    with open(UPLOAD_PATH, "wb") as f:
+                        f.write(uploaded_file.getbuffer())
+                    
+                    timezone = pytz.timezone("Asia/Kolkata")
+                    upload_time = datetime.now(timezone).strftime("%d-%m-%Y %H:%M:%S")
+                    save_timestamp(upload_time)
+                    save_uploaded_filename(uploaded_file.name)
 
-            st.sidebar.success(f"✅ File uploaded at {upload_time}")
-            push_to_github(UPLOAD_PATH, "Master-Stock Sheet Original.xlsx", commit_message=f"Uploaded {uploaded_file.name}")
-            push_to_github(TIMESTAMP_PATH, "timestamp.txt", commit_message="Updated timestamp")
+                    st.sidebar.success(f"✅ File uploaded at {upload_time}")
+                    push_to_github(UPLOAD_PATH, "Master-Stock Sheet Original.xlsx", commit_message=f"Uploaded {uploaded_file.name}")
+                    push_to_github(TIMESTAMP_PATH, "timestamp.txt", commit_message="Updated timestamp")
 
-    if os.path.exists(UPLOAD_PATH):
-        with open(UPLOAD_PATH, "rb") as f:
-            st.sidebar.download_button(
-                label="⬇️ Download Uploaded Excel File",
-                data=f,
-                file_name=load_uploaded_filename(),
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+    except Exception as e:
+        st.sidebar.error(f"❌ An error occurred during file upload: {e}")
 else:
     if password:
         st.sidebar.error("❌ Incorrect password!")
@@ -171,7 +172,7 @@ else:
 # -------------------------
 # Load Excel
 # -------------------------
-@st.cache_data(ttl=600)  # Cache for 10 minutes
+@st.cache_data
 def load_data_from_github():
     url = f"https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/{UPLOAD_PATH.replace(' ', '%20')}"
     r = requests.get(url)
@@ -217,7 +218,7 @@ else:
         st.warning("There is no 'Check' column found in the data.")
     with tab2:
         st.subheader("📄 No Dispatch Data")
-        st.warning("Please check the dispatches sheet for further details.")
+        st.warning("Please check your inventory for errors or missing columns.")
 
 # -------------------------
 # Search Tab
