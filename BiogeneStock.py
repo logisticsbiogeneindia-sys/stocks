@@ -203,6 +203,25 @@ else:
 
 tab1, tab2, tab3, tab4 = st.tabs(["🏠 Local", "🚚 Outstation", "📦 Other", "🔍 Search"])
 
+if check_col and sheet_name != "Dispatches":
+    check_vals = df[check_col].astype(str).str.strip().str.lower()
+    with tab1:
+        st.subheader("🏠 Local Inventory")
+        st.dataframe(df[check_vals == "local"], use_container_width=True, height=600)
+    with tab2:
+        st.subheader("🚚 Outstation Inventory")
+        st.dataframe(df[check_vals == "outstation"], use_container_width=True, height=600)
+    with tab3:
+        st.subheader("📦 Other Inventory")
+        st.dataframe(df[~check_vals.isin(["local", "outstation"])], use_container_width=True, height=600)
+else:
+    with tab1:
+        st.subheader("📄 No Inventory Data")
+        st.warning("There is no 'Check' column found in the data.")
+    with tab2:
+        st.subheader("📄 No Dispatch Data")
+        st.warning("Please check your inventory for errors or missing columns.")
+
 # -------------------------
 # Search Tab
 # -------------------------
@@ -218,36 +237,113 @@ with tab4:
     remarks_col = find_column(search_df, ["Remarks", "Remark", "Notes", "Comments"])
     awb_col = find_column(search_df, ["AWB", "AWB Number", "Tracking Number"])
     date_col = find_column(search_df, ["Date", "Dispatch Date", "Created On", "Order Date"])
-    description_col = find_column(search_df, ["Item Description", "Description", "ItemDesc"])
 
     df_filtered = search_df.copy()
     search_performed = False
 
-    if search_sheet == "Item Wise Current Inventory":
-        col1, col2, col3, col4, col5 = st.columns(5)
-
+    if search_sheet == "Current Inventory":
+        col1, col2, col3 = st.columns(3)
         with col1:
-            search_item = st.text_input("Search by Item Code").strip()
+              customer_options = df_filtered[customer_col].dropna().unique().tolist()
+            search_customer = st.text_input("Search by Customer Name", key="search_customer")
+
+            customer_matches = [opt for opt in customer_options if search_customer.lower() in opt.lower()]
+            search_customer = st.selectbox(
+                "Select Customer Name", customer_matches, index=0 if search_customer.lower() in customer_matches else -1, key="search_customer_select"
+            )
+            if search_customer:
+                search_performed = True
+                df_filtered = df_filtered[df_filtered[customer_col].str.contains(search_customer, case=False, na=False)]
+        
         with col2:
-            search_customer = st.text_input("Search by Customer Name").strip()
+            brand_options = df_filtered[brand_col].dropna().unique().tolist()
+            search_brand = st.text_input("Search by Brand", key="search_brand")
+            
+            brand_matches = [opt for opt in brand_options if search_brand.lower() in opt.lower()]
+            search_brand = st.selectbox(
+                "Select Brand", brand_matches, index=0 if search_brand.lower() in brand_matches else -1, key="search_brand_select"
+            )
+            if search_brand:
+                search_performed = True
+                df_filtered = df_filtered[df_filtered[brand_col].str.contains(search_brand, case=False, na=False)]
+        
         with col3:
-            search_brand = st.text_input("Search by Brand").strip()
+            remarks_options = df_filtered[remarks_col].dropna().unique().tolist()
+            search_remarks = st.text_input("Search by Remarks", key="search_remarks")
+            
+            remarks_matches = [opt for opt in remarks_options if search_remarks.lower() in opt.lower()]
+            search_remarks = st.selectbox(
+                "Select Remarks", remarks_matches, index=0 if search_remarks.lower() in remarks_matches else -1, key="search_remarks_select"
+            )
+            if search_remarks:
+                search_performed = True
+                df_filtered = df_filtered[df_filtered[remarks_col].str.contains(search_remarks, case=False, na=False)]
+        
+
+        if search_customer and customer_col:
+            search_performed = True
+            df_filtered = df_filtered[df_filtered[customer_col].astype(str).str.contains(search_customer, case=False, na=False)]
+        if search_brand and brand_col:
+            search_performed = True
+            df_filtered = df_filtered[df_filtered[brand_col].astype(str).str.contains(search_brand, case=False, na=False)]
+        if search_remarks and remarks_col:
+            search_performed = True
+            df_filtered = df_filtered[df_filtered[remarks_col].astype(str).str.contains(search_remarks, case=False, na=False)]
+
+      elif search_sheet == "Item Wise Current Inventory":
+        col1, col2, col3, col4 = st.columns(4)
+        
+        # Autocomplete for Item Code
+        with col1:
+            item_options = df_filtered[item_col].dropna().unique().tolist()
+            search_item = st.text_input("Search by Item Code", key="search_item")
+
+            item_matches = [opt for opt in item_options if search_item.lower() in opt.lower()]
+            search_item = st.selectbox(
+                "Select Item Code", item_matches, index=0 if search_item.lower() in item_matches else -1, key="search_item_select"
+            )
+            if search_item:
+                search_performed = True
+                df_filtered = df_filtered[df_filtered[item_col].str.contains(search_item, case=False, na=False)]
+
+        # Autocomplete for Customer Name
+        with col2:
+            search_customer = st.text_input("Search by Customer Name", key="search_customer")
+
+            customer_matches = [opt for opt in customer_options if search_customer.lower() in opt.lower()]
+            search_customer = st.selectbox(
+                "Select Customer Name", customer_matches, index=0 if search_customer.lower() in customer_matches else -1, key="search_customer_select"
+            )
+            if search_customer:
+                search_performed = True
+                df_filtered = df_filtered[df_filtered[customer_col].str.contains(search_customer, case=False, na=False)]
+        
+        # Autocomplete for Brand
+        with col3:
+            brand_options = df_filtered[brand_col].dropna().unique().tolist()
+            search_brand = st.text_input("Search by Brand", key="search_brand")
+
+            brand_matches = [opt for opt in brand_options if search_brand.lower() in opt.lower()]
+            search_brand = st.selectbox(
+                "Select Brand", brand_matches, index=0 if search_brand.lower() in brand_matches else -1, key="search_brand_select"
+            )
+            if search_brand:
+                search_performed = True
+                df_filtered = df_filtered[df_filtered[brand_col].str.contains(search_brand, case=False, na=False)]
+        
+        # Autocomplete for Remarks
         with col4:
-            search_remarks = st.text_input("Search by Remarks").strip()
-        with col5:
-            # Search by Item Description
-            if description_col:
-                all_descriptions = search_df[description_col].dropna().unique().tolist()
-                search_description = st.text_input("Search by Description", value="")
+            remarks_options = df_filtered[remarks_col].dropna().unique().tolist()
+            search_remarks = st.text_input("Search by Remarks", key="search_remarks")
 
-                # Filter descriptions that match the search text
-                suggestions = [desc for desc in all_descriptions if search_description.lower() in desc.lower()]
-                if suggestions:
-                    search_description = st.selectbox("Description Suggestions", suggestions, index=0)
-                else:
-                    search_description = st.text_input("Search by Description", value=search_description)
-
-        # Apply filters
+            remarks_matches = [opt for opt in remarks_options if search_remarks.lower() in opt.lower()]
+            search_remarks = st.selectbox(
+                "Select Remarks", remarks_matches, index=0 if search_remarks.lower() in remarks_matches else -1, key="search_remarks_select"
+            )
+            if search_remarks:
+                search_performed = True
+                df_filtered = df_filtered[df_filtered[remarks_col].str.contains(search_remarks, case=False, na=False)]
+        
         if search_item and item_col:
             search_performed = True
             df_filtered = df_filtered[df_filtered[item_col].astype(str).str.contains(search_item, case=False, na=False)]
@@ -260,19 +356,42 @@ with tab4:
         if search_remarks and remarks_col:
             search_performed = True
             df_filtered = df_filtered[df_filtered[remarks_col].astype(str).str.contains(search_remarks, case=False, na=False)]
-        if description_col and search_description:  # Check description_col and search_description before filtering
-            search_performed = True
-            df_filtered = df_filtered[df_filtered[description_col].astype(str).str.contains(search_description, case=False, na=False)]
 
-    # Display filtered results
+    elif search_sheet == "Dispatches":
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            date_range = st.date_input("Select Date Range", [])
+        with col2:
+            search_awb = st.text_input("Search by AWB Number").strip()
+        with col3:
+            search_customer = st.text_input("Search by Customer Name").strip()
+
+        if date_range and len(date_range) == 2 and date_col:
+            start, end = date_range
+            search_performed = True
+            df_filtered[date_col] = pd.to_datetime(df_filtered[date_col], errors="coerce")
+            df_filtered = df_filtered[(df_filtered[date_col] >= pd.to_datetime(start)) & (df_filtered[date_col] <= pd.to_datetime(end))]
+        if search_awb and awb_col:
+            search_performed = True
+            df_filtered = df_filtered[df_filtered[awb_col].astype(str).str.contains(search_awb, case=False, na=False)]
+        if search_customer and customer_col:
+            search_performed = True
+            df_filtered = df_filtered[df_filtered[customer_col].astype(str).str.contains(search_customer, case=False, na=False)]
+
     if search_performed:
         if df_filtered.empty:
             st.warning("No matching records found.")
         else:
             st.dataframe(df_filtered, use_container_width=True, height=600)
 
-
-
+# -------------------------
+# Footer
+# -------------------------
+st.markdown("""
+<div class="footer">
+    © 2025 Biogene India | Created By Mohit Sharma
+</div>
+""", unsafe_allow_html=True)
 # -------------------------
 # Footer
 # -------------------------
