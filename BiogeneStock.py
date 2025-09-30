@@ -230,7 +230,6 @@ with tab4:
     search_sheet = st.selectbox("Select sheet to search", allowed_sheets, index=0)
     search_df = xl.parse(search_sheet)
 
-    # Columns
     item_col = find_column(search_df, ["Item Code", "ItemCode", "SKU", "Product Code"])
     customer_col = find_column(search_df, ["Customer Name", "CustomerName", "Customer", "CustName"])
     brand_col = find_column(search_df, ["Brand", "BrandName", "Product Brand", "Company"])
@@ -244,18 +243,21 @@ with tab4:
     if search_sheet == "Current Inventory":
         col1, col2, col3 = st.columns(3)
         with col1:
-            search_customer = st.text_input("Search by Customer Name", key="search_customer")
+            search_customer = st.text_input("Search by Customer Name", key=f"search_customer_{search_sheet}")
         with col2:
-            search_brand = st.text_input("Search by Brand", key="search_brand")
+            search_brand = st.text_input("Search by Brand", key=f"search_brand_{search_sheet}")
         with col3:
-            search_remarks = st.text_input("Search by Remarks", key="search_remarks")
+            search_remarks = st.text_input("Search by Remarks", key=f"search_remarks_{search_sheet}")
 
-        # Autocomplete
+        # Autocomplete for customer name
         if customer_col:
             customer_suggestions = search_df[customer_col].dropna().unique()
             customer_suggestions = [str(x) for x in customer_suggestions]
-            search_customer = st.text_input("Search by Customer Name", value=search_customer, key="search_customer", 
+            search_customer = st.text_input("Search by Customer Name", value=search_customer, 
+                                            key=f"autocomplete_customer_{search_sheet}", 
                                             autocomplete=customer_suggestions)
+
+        # Perform search
         if search_customer and customer_col:
             search_performed = True
             df_filtered = df_filtered[df_filtered[customer_col].astype(str).str.contains(search_customer, case=False, na=False)]
@@ -271,12 +273,3 @@ with tab4:
             st.warning("No matching records found.")
         else:
             st.dataframe(df_filtered, use_container_width=True, height=600)
-
-# -------------------------
-# Footer
-# -------------------------
-st.markdown("""
-<div class="footer">
-    © 2025 Biogene India | Created By Mohit Sharma
-</div>
-""", unsafe_allow_html=True)
