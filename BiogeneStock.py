@@ -230,14 +230,14 @@ with tab4:
     search_sheet = st.selectbox("Select sheet to search", allowed_sheets, index=0)
     search_df = xl.parse(search_sheet)
 
-    # Columns for search
+    # Columns
     item_col = find_column(search_df, ["Item Code", "ItemCode", "SKU", "Product Code"])
     customer_col = find_column(search_df, ["Customer Name", "CustomerName", "Customer", "CustName"])
     brand_col = find_column(search_df, ["Brand", "BrandName", "Product Brand", "Company"])
     remarks_col = find_column(search_df, ["Remarks", "Remark", "Notes", "Comments"])
     awb_col = find_column(search_df, ["AWB", "AWB Number", "Tracking Number"])
     date_col = find_column(search_df, ["Date", "Dispatch Date", "Created On", "Order Date"])
-    description_col = find_column(search_df, ["Item Discription", "Item Description", "Description"])
+    description_col = find_column(search_df, ["Item Description", "Description", "ItemDesc"])
 
     df_filtered = search_df.copy()
     search_performed = False
@@ -245,23 +245,11 @@ with tab4:
     if search_sheet == "Current Inventory":
         col1, col2, col3 = st.columns(3)
         with col1:
-            search_customer = st.text_input("Search by Customer Name", value="")
+            search_customer = st.text_input("Search by Customer Name").strip()
         with col2:
-            search_brand = st.text_input("Search by Brand", value="")
+            search_brand = st.text_input("Search by Brand").strip()
         with col3:
-            search_remarks = st.text_input("Search by Remarks", value="")
-
-        if customer_col:
-            customer_suggestions = search_df[customer_col].dropna().unique()
-            search_customer = st.selectbox("Select Customer Name", customer_suggestions, index=0)
-
-        if brand_col:
-            brand_suggestions = search_df[brand_col].dropna().unique()
-            search_brand = st.selectbox("Select Brand", brand_suggestions, index=0)
-
-        if remarks_col:
-            remarks_suggestions = search_df[remarks_col].dropna().unique()
-            search_remarks = st.selectbox("Select Remarks", remarks_suggestions, index=0)
+            search_remarks = st.text_input("Search by Remarks").strip()
 
         if search_customer and customer_col:
             search_performed = True
@@ -276,40 +264,31 @@ with tab4:
     elif search_sheet == "Item Wise Current Inventory":
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            search_item = st.text_input("Search by Item Code", value="")
+            search_item = st.text_input("Search by Item Code").strip()
         with col2:
-            search_description = st.text_input("Search by Item Description", value="")
+            search_customer = st.text_input("Search by Customer Name").strip()
         with col3:
-            search_customer = st.text_input("Search by Customer Name", value="")
+            search_brand = st.text_input("Search by Brand").strip()
         with col4:
-            search_brand = st.text_input("Search by Brand", value="")
+            search_remarks = st.text_input("Search by Remarks").strip()
+                with col5:
+            # Search by Item Description
+            if description_col:
+                all_descriptions = search_df[description_col].dropna().unique().tolist()
+                search_description = st.text_input("Search by Description", value="")
 
-        if item_col:
-            item_suggestions = search_df[item_col].dropna().unique()
-            search_item = st.selectbox("Select Item Code", item_suggestions.tolist(), index=0)
+                # Filter descriptions that match the search text
+                suggestions = [desc for desc in all_descriptions if search_description.lower() in desc.lower()]
+                if suggestions:
+                    search_description = st.selectbox("Description Suggestions", suggestions, index=0)
+                else:
+                    search_description = st.text_input("Search by Description", value=search_description)
+        
 
-        if description_col:
-            description_suggestions = search_df[description_col].dropna().unique()
-            search_description = st.selectbox("Select Item Description", description_suggestions.tolist(), index=0)
-
-        if customer_col:
-            customer_suggestions = search_df[customer_col].dropna().unique()
-            search_customer = st.selectbox("Select Customer Name", customer_suggestions.tolist(), index=0)
-
-        if brand_col:
-            brand_suggestions = search_df[brand_col].dropna().unique()
-            search_brand = st.selectbox("Select Brand", brand_suggestions.tolist(), index=0)
-
-        if remarks_col:
-            remarks_suggestions = search_df[remarks_col].dropna().unique()
-            search_remarks = st.selectbox("Select Remarks", remarks_suggestions.tolist(), index=0)
 
         if search_item and item_col:
             search_performed = True
             df_filtered = df_filtered[df_filtered[item_col].astype(str).str.contains(search_item, case=False, na=False)]
-        if search_description and description_col:
-            search_performed = True
-            df_filtered = df_filtered[df_filtered[description_col].astype(str).str.contains(search_description, case=False, na=False)]
         if search_customer and customer_col:
             search_performed = True
             df_filtered = df_filtered[df_filtered[customer_col].astype(str).str.contains(search_customer, case=False, na=False)]
@@ -319,15 +298,19 @@ with tab4:
         if search_remarks and remarks_col:
             search_performed = True
             df_filtered = df_filtered[df_filtered[remarks_col].astype(str).str.contains(search_remarks, case=False, na=False)]
+        if search_description and description_col:
+            search_performed = True
+            df_filtered = df_filtered[df_filtered[description_col].astype(str).str.contains(search_description, case=False, na=False)]
+
 
     elif search_sheet == "Dispatches":
         col1, col2, col3 = st.columns(3)
         with col1:
             date_range = st.date_input("Select Date Range", [])
         with col2:
-            search_awb = st.text_input("Search by AWB Number", value="")
+            search_awb = st.text_input("Search by AWB Number").strip()
         with col3:
-            search_customer = st.text_input("Search by Customer Name", value="")
+            search_customer = st.text_input("Search by Customer Name").strip()
 
         if date_range and len(date_range) == 2 and date_col:
             start, end = date_range
@@ -347,6 +330,11 @@ with tab4:
         else:
             st.dataframe(df_filtered, use_container_width=True, height=600)
 
-
-
-# ------------------------- # Footer # ------------------------- st.markdown(""" <div class="footer"> © 2025 Biogene India | Created By Mohit Sharma </div> """, unsafe_allow_html=True)
+# -------------------------
+# Footer
+# -------------------------
+st.markdown("""
+<div class="footer">
+    © 2025 Biogene India | Created By Mohit Sharma
+</div>
+""", unsafe_allow_html=True)
