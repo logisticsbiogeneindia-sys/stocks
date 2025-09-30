@@ -203,15 +203,34 @@ else:
 
 tab1, tab2, tab3, tab4 = st.tabs(["🏠 Local", "🚚 Outstation", "📦 Other", "🔍 Search"])
 
+if check_col and sheet_name != "Dispatches":
+    check_vals = df[check_col].astype(str).str.strip().str.lower()
+    with tab1:
+        st.subheader("🏠 Local Inventory")
+        st.dataframe(df[check_vals == "local"], use_container_width=True, height=600)
+    with tab2:
+        st.subheader("🚚 Outstation Inventory")
+        st.dataframe(df[check_vals == "outstation"], use_container_width=True, height=600)
+    with tab3:
+        st.subheader("📦 Other Inventory")
+        st.dataframe(df[~check_vals.isin(["local", "outstation"])], use_container_width=True, height=600)
+else:
+    with tab1:
+        st.subheader("📄 No Inventory Data")
+        st.warning("There is no 'Check' column found in the data.")
+    with tab2:
+        st.subheader("📄 No Dispatch Data")
+        st.warning("Please check your inventory for errors or missing columns.")
+
 # -------------------------
-# Search Tab with Autocomplete
+# Search Tab
 # -------------------------
 with tab4:
     st.subheader("🔍 Search Inventory")
-    
     search_sheet = st.selectbox("Select sheet to search", allowed_sheets, index=0)
     search_df = xl.parse(search_sheet)
 
+    # Columns
     item_col = find_column(search_df, ["Item Code", "ItemCode", "SKU", "Product Code"])
     customer_col = find_column(search_df, ["Customer Name", "CustomerName", "Customer", "CustName"])
     brand_col = find_column(search_df, ["Brand", "BrandName", "Product Brand", "Company"])
@@ -224,107 +243,34 @@ with tab4:
 
     if search_sheet == "Current Inventory":
         col1, col2, col3 = st.columns(3)
-
-        # Autocomplete for Customer Name
         with col1:
-            customer_options = df_filtered[customer_col].dropna().unique().tolist()
             search_customer = st.text_input("Search by Customer Name", key="search_customer")
-
-            customer_matches = [opt for opt in customer_options if search_customer.lower() in opt.lower()]
-            search_customer = st.selectbox(
-                "Select Customer Name", customer_matches, index=0 if search_customer.lower() in customer_matches else -1, key="search_customer_select"
-            )
-            if search_customer:
-                search_performed = True
-                df_filtered = df_filtered[df_filtered[customer_col].str.contains(search_customer, case=False, na=False)]
-
-        # Autocomplete for Brand
         with col2:
-            brand_options = df_filtered[brand_col].dropna().unique().tolist()
             search_brand = st.text_input("Search by Brand", key="search_brand")
-
-            brand_matches = [opt for opt in brand_options if search_brand.lower() in opt.lower()]
-            search_brand = st.selectbox(
-                "Select Brand", brand_matches, index=0 if search_brand.lower() in brand_matches else -1, key="search_brand_select"
-            )
-            if search_brand:
-                search_performed = True
-                df_filtered = df_filtered[df_filtered[brand_col].str.contains(search_brand, case=False, na=False)]
-
-        # Autocomplete for Remarks
         with col3:
-            remarks_options = df_filtered[remarks_col].dropna().unique().tolist()
             search_remarks = st.text_input("Search by Remarks", key="search_remarks")
 
-            remarks_matches = [opt for opt in remarks_options if search_remarks.lower() in opt.lower()]
-            search_remarks = st.selectbox(
-                "Select Remarks", remarks_matches, index=0 if search_remarks.lower() in remarks_matches else -1, key="search_remarks_select"
-            )
-            if search_remarks:
-                search_performed = True
-                df_filtered = df_filtered[df_filtered[remarks_col].str.contains(search_remarks, case=False, na=False)]
-
-    elif search_sheet == "Item Wise Current Inventory":
-        col1, col2, col3, col4 = st.columns(4)
-
-        # Autocomplete for Item Code
-        with col1:
-            item_options = df_filtered[item_col].dropna().unique().tolist()
-            search_item = st.text_input("Search by Item Code", key="search_item")
-
-            item_matches = [opt for opt in item_options if search_item.lower() in opt.lower()]
-            search_item = st.selectbox(
-                "Select Item Code", item_matches, index=0 if search_item.lower() in item_matches else -1, key="search_item_select"
-            )
-            if search_item:
-                search_performed = True
-                df_filtered = df_filtered[df_filtered[item_col].str.contains(search_item, case=False, na=False)]
-
-        # Autocomplete for Customer Name
-        with col2:
-            customer_matches = [opt for opt in customer_options if search_customer.lower() in opt.lower()]
-            search_customer = st.text_input("Search by Customer Name", key="search_customer")
-
-            search_customer = st.selectbox(
-                "Select Customer Name", customer_matches, index=0 if search_customer.lower() in customer_matches else -1, key="search_customer_select"
-            )
-            if search_customer:
-                search_performed = True
-                df_filtered = df_filtered[df_filtered[customer_col].str.contains(search_customer, case=False, na=False)]
-
-        # Autocomplete for Brand
-        with col3:
-            brand_matches = [opt for opt in brand_options if search_brand.lower() in opt.lower()]
-            search_brand = st.text_input("Search by Brand", key="search_brand")
-
-            search_brand = st.selectbox(
-                "Select Brand", brand_matches, index=0 if search_brand.lower() in brand_matches else -1, key="search_brand_select"
-            )
-            if search_brand:
-                search_performed = True
-                df_filtered = df_filtered[df_filtered[brand_col].str.contains(search_brand, case=False, na=False)]
-
-        # Autocomplete for Remarks
-        with col4:
-            remarks_matches = [opt for opt in remarks_options if search_remarks.lower() in opt.lower()]
-            search_remarks = st.text_input("Search by Remarks", key="search_remarks")
-
-            search_remarks = st.selectbox(
-                "Select Remarks", remarks_matches, index=0 if search_remarks.lower() in remarks_matches else -1, key="search_remarks_select"
-            )
-            if search_remarks:
-                search_performed = True
-                df_filtered = df_filtered[df_filtered[remarks_col].str.contains(search_remarks, case=False, na=False)]
+        # Autocomplete
+        if customer_col:
+            customer_suggestions = search_df[customer_col].dropna().unique()
+            customer_suggestions = [str(x) for x in customer_suggestions]
+            search_customer = st.text_input("Search by Customer Name", value=search_customer, key="search_customer", 
+                                            autocomplete=customer_suggestions)
+        if search_customer and customer_col:
+            search_performed = True
+            df_filtered = df_filtered[df_filtered[customer_col].astype(str).str.contains(search_customer, case=False, na=False)]
+        if search_brand and brand_col:
+            search_performed = True
+            df_filtered = df_filtered[df_filtered[brand_col].astype(str).str.contains(search_brand, case=False, na=False)]
+        if search_remarks and remarks_col:
+            search_performed = True
+            df_filtered = df_filtered[df_filtered[remarks_col].astype(str).str.contains(search_remarks, case=False, na=False)]
 
     if search_performed:
         if df_filtered.empty:
             st.warning("No matching records found.")
         else:
             st.dataframe(df_filtered, use_container_width=True, height=600)
-
-]
-
-
 
 # -------------------------
 # Footer
