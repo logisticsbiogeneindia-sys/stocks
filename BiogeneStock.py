@@ -243,8 +243,8 @@ with tab4:
 
     if search_sheet == "Current Inventory":
         col1, col2, col3 = st.columns(3)
-        with col1:
-              customer_options = df_filtered[customer_col].dropna().unique().tolist()
+         with col1:
+            customer_options = df_filtered[customer_col].dropna().unique().tolist()
             search_customer = st.text_input("Search by Customer Name", key="search_customer")
 
             customer_matches = [opt for opt in customer_options if search_customer.lower() in opt.lower()]
