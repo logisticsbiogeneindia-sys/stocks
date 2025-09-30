@@ -203,27 +203,8 @@ else:
 
 tab1, tab2, tab3, tab4 = st.tabs(["🏠 Local", "🚚 Outstation", "📦 Other", "🔍 Search"])
 
-if check_col and sheet_name != "Dispatches":
-    check_vals = df[check_col].astype(str).str.strip().str.lower()
-    with tab1:
-        st.subheader("🏠 Local Inventory")
-        st.dataframe(df[check_vals == "local"], use_container_width=True, height=600)
-    with tab2:
-        st.subheader("🚚 Outstation Inventory")
-        st.dataframe(df[check_vals == "outstation"], use_container_width=True, height=600)
-    with tab3:
-        st.subheader("📦 Other Inventory")
-        st.dataframe(df[~check_vals.isin(["local", "outstation"])], use_container_width=True, height=600)
-else:
-    with tab1:
-        st.subheader("📄 No Inventory Data")
-        st.warning("There is no 'Check' column found in the data.")
-    with tab2:
-        st.subheader("📄 No Dispatch Data")
-        st.warning("Please check your inventory for errors or missing columns.")
-
 # -------------------------
-# Search Tab - Item Wise Current Inventory
+# Search Tab
 # -------------------------
 with tab4:
     st.subheader("🔍 Search Inventory")
@@ -244,7 +225,7 @@ with tab4:
 
     if search_sheet == "Item Wise Current Inventory":
         col1, col2, col3, col4, col5 = st.columns(5)
-        
+
         with col1:
             search_item = st.text_input("Search by Item Code").strip()
         with col2:
@@ -258,7 +239,7 @@ with tab4:
             if description_col:
                 all_descriptions = search_df[description_col].dropna().unique().tolist()
                 search_description = st.text_input("Search by Description", value="")
-                
+
                 # Filter descriptions that match the search text
                 suggestions = [desc for desc in all_descriptions if search_description.lower() in desc.lower()]
                 if suggestions:
@@ -279,7 +260,7 @@ with tab4:
         if search_remarks and remarks_col:
             search_performed = True
             df_filtered = df_filtered[df_filtered[remarks_col].astype(str).str.contains(search_remarks, case=False, na=False)]
-        if search_description and description_col:
+        if description_col and search_description:  # Check description_col and search_description before filtering
             search_performed = True
             df_filtered = df_filtered[df_filtered[description_col].astype(str).str.contains(search_description, case=False, na=False)]
 
@@ -289,6 +270,7 @@ with tab4:
             st.warning("No matching records found.")
         else:
             st.dataframe(df_filtered, use_container_width=True, height=600)
+
 
 
 # -------------------------
