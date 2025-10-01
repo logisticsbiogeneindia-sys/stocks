@@ -63,7 +63,7 @@ st.markdown(f"""
 st.sidebar.header("⚙️ Settings")
 view_option = st.sidebar.radio("Choose View", ["Inventory Viewer", "Full Control"])
 inventory_type = st.sidebar.selectbox("Choose Inventory Type", ["Current Inventory", "Item Wise Current Inventory"])
-password = st.sidebar.text_input("Enter Password to Upload/Download File", type="password")
+password = st.sidebar.text_input("Enter Password", type="password")
 correct_password = st.secrets["PASSWORD"]
 
 UPLOAD_PATH = "Master-Stock Sheet Original.xlsx"
@@ -309,6 +309,10 @@ if view_option == "Inventory Viewer":
 # Full Control (Editable Sheets)
 # -------------------------
 elif view_option == "Full Control":
+    if password != correct_password:
+        st.warning("🔒 Full Control requires a valid password!")
+        st.stop()  # Stop execution if password invalid
+
     sheet_to_edit = st.selectbox("Select sheet to edit", xl.sheet_names)
     df_edit = xl.parse(sheet_to_edit)
     st.subheader(f"✏️ Editing Sheet: {sheet_to_edit}")
