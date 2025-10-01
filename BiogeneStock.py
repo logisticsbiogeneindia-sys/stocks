@@ -8,6 +8,8 @@ import requests
 import base64
 import io
 from openpyxl import load_workbook
+import tempfile
+import shutil
 
 # -------------------------
 # Helpers
@@ -27,6 +29,27 @@ def find_column(df: pd.DataFrame, candidates: list) -> str | None:
             if key in norm_col or norm_col in key:
                 return orig
     return None
+
+def is_valid_excel(file_path):
+    try:
+        load_workbook(file_path)
+        return True
+    except Exception:
+        return False
+
+def save_excel_with_sheet_safe(df, path, sheet_name):
+    tmp_path = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx").name
+    if os.path.exists(path):
+        book = load_workbook(path)
+        if sheet_name in book.sheetnames:
+            std = book[sheet_name]
+            book.remove(std)
+        with pd.ExcelWriter(tmp_path, engine="openpyxl") as writer:
+            writer.book = book
+            df.to_excel(writer, sheet_name=sheet_name, index=False)
+    else:
+        df.to_excel(tmp_path, sheet_name=sheet_name, index=False)
+    shutil.move(tmp_path, path)
 
 # -------------------------
 # Config & Styling
@@ -89,7 +112,7 @@ def load_uploaded_filename():
 # GitHub Config
 # -------------------------
 OWNER = "logisticsbiogeneindia-sys"
-REPO = "stocks"
+REPO = "BiogeneIndia"
 BRANCH = "main"
 TOKEN = st.secrets["GITHUB_TOKEN"]
 headers = {"Authorization": f"Bearer {TOKEN}", "Accept": "application/vnd.github+json"}
@@ -141,16 +164,18 @@ st.markdown(f"🕒 **Last Updated (from GitHub):** {github_timestamp}")
 if password == correct_password:
     uploaded_file = st.sidebar.file_uploader("Upload Excel File", type=["xlsx", "xls"])
     if uploaded_file is not None:
-        with st.spinner("Uploading file..."):
-            with open(UPLOAD_PATH, "wb") as f:
-                f.write(uploaded_file.getbuffer())
-            timezone = pytz.timezone("Asia/Kolkata")
-            upload_time = datetime.now(timezone).strftime("%d-%m-%Y %H:%M:%S")
-            save_timestamp(upload_time)
-            save_uploaded_filename(uploaded_file.name)
-            st.sidebar.success(f"✅ File uploaded at {upload_time}")
-            push_to_github(UPLOAD_PATH, "Master-Stock Sheet Original.xlsx", commit_message=f"Uploaded {uploaded_file.name}")
-            push_to_github(TIMESTAMP_PATH, "timestamp.txt", commit_message="Updated timestamp")
+        with open(UPLOAD_PATH, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+        if not is_valid_excel(UPLOAD_PATH):
+            st.error("❌ Uploaded file is not a valid Excel file!")
+            st.stop()
+        timezone = pytz.timezone("Asia/Kolkata")
+        upload_time = datetime.now(timezone).strftime("%d-%m-%Y %H:%M:%S")
+        save_timestamp(upload_time)
+        save_uploaded_filename(uploaded_file.name)
+        st.sidebar.success(f"✅ File uploaded at {upload_time}")
+        push_to_github(UPLOAD_PATH, "Master-Stock Sheet Original.xlsx", commit_message=f"Uploaded {uploaded_file.name}")
+        push_to_github(TIMESTAMP_PATH, "timestamp.txt", commit_message="Updated timestamp")
     if os.path.exists(UPLOAD_PATH):
         with open(UPLOAD_PATH, "rb") as f:
             st.sidebar.download_button(
@@ -179,22 +204,10 @@ if not os.path.exists(UPLOAD_PATH):
         st.error(f"❌ Error loading Excel from GitHub: {e}")
         st.stop()
 else:
+    if not is_valid_excel(UPLOAD_PATH):
+        st.error("❌ Local Excel file is corrupted!")
+        st.stop()
     xl = pd.ExcelFile(UPLOAD_PATH)
-
-# -------------------------
-# Helper to save sheet safely
-# -------------------------
-def save_excel_with_sheet(df, path, sheet_name):
-    if os.path.exists(path):
-        book = load_workbook(path)
-        if sheet_name in book.sheetnames:
-            std = book[sheet_name]
-            book.remove(std)
-        with pd.ExcelWriter(path, engine="openpyxl") as writer:
-            writer.book = book
-            df.to_excel(writer, sheet_name=sheet_name, index=False)
-    else:
-        df.to_excel(path, sheet_name=sheet_name, index=False)
 
 # -------------------------
 # Inventory Viewer
@@ -208,61 +221,29 @@ def show_inventory_viewer():
     df = xl.parse(sheet_name)
     st.success(f"✅ **{sheet_name}** Loaded Successfully!")
     check_col = find_column(df, ["Check", "Location", "Status", "Type", "StockType"])
-
     tab1, tab2, tab3, tab4 = st.tabs(["🏠 Local", "🚚 Outstation", "📦 Other", "🔍 Search"])
     if check_col and sheet_name != "Dispatches":
         check_vals = df[check_col].astype(str).str.strip().str.lower()
-        with tab1:
-            st.subheader("🏠 Local Inventory")
-            st.dataframe(df[check_vals == "local"], use_container_width=True, height=600)
-        with tab2:
-            st.subheader("🚚 Outstation Inventory")
-            st.dataframe(df[check_vals == "outstation"], use_container_width=True, height=600)
-        with tab3:
-            st.subheader("📦 Other Inventory")
-            st.dataframe(df[~check_vals.isin(["local", "outstation"])], use_container_width=True, height=600)
+        with tab1: st.subheader("🏠 Local Inventory"); st.dataframe(df[check_vals=="local"], use_container_width=True, height=600)
+        with tab2: st.subheader("🚚 Outstation Inventory"); st.dataframe(df[check_vals=="outstation"], use_container_width=True, height=600)
+        with tab3: st.subheader("📦 Other Inventory"); st.dataframe(df[~check_vals.isin(["local","outstation"])], use_container_width=True, height=600)
     else:
-        for tab, msg in zip([tab1, tab2], ["No Inventory Data", "No Dispatch Data"]):
-            with tab:
-                st.subheader("📄 " + msg)
-                st.warning("There is no 'Check' column found in the data.")
-
-    # Search Tab
-    with tab4:
-        st.subheader("🔍 Search Inventory")
-        search_sheet = st.selectbox("Select sheet to search", allowed_sheets, index=0)
-        search_df = xl.parse(search_sheet)
-        item_col = find_column(search_df, ["Item Code", "ItemCode", "SKU", "Product Code"])
-        customer_col = find_column(search_df, ["Customer Name", "CustomerName", "Customer", "CustName"])
-        brand_col = find_column(search_df, ["Brand", "BrandName", "Product Brand", "Company"])
-        remarks_col = find_column(search_df, ["Remarks", "Remark", "Notes", "Comments"])
-        awb_col = find_column(search_df, ["AWB", "AWB Number", "Tracking Number"])
-        date_col = find_column(search_df, ["Date", "Dispatch Date", "Created On", "Order Date"])
-
-        df_filtered = search_df.copy()
-        search_performed = False
-
-        # [Search logic here, same as before...]
-
-        st.dataframe(df_filtered, use_container_width=True, height=600)
+        for tab,msg in zip([tab1,tab2], ["No Inventory Data","No Dispatch Data"]):
+            with tab: st.subheader("📄 "+msg); st.warning("There is no 'Check' column found in the data.")
 
 # -------------------------
 # Full Control Mode
 # -------------------------
-if view_option == "Full Control":
+if view_option=="Full Control":
     if password != correct_password:
-        st.warning("🔒 Full Control requires a valid password!")
-        st.stop()
-
+        st.warning("🔒 Full Control requires a valid password!"); st.stop()
     sheet_to_edit = st.selectbox("Select sheet to edit", xl.sheet_names)
     df_edit = xl.parse(sheet_to_edit)
     st.subheader(f"✏️ Editing Sheet: {sheet_to_edit}")
-
     edited_df = st.data_editor(df_edit, num_rows="dynamic", use_container_width=True, height=600)
-
     if st.sidebar.button(f"💾 Save Changes to {sheet_to_edit}"):
         with st.spinner("Saving changes..."):
-            save_excel_with_sheet(edited_df, UPLOAD_PATH, sheet_to_edit)
+            save_excel_with_sheet_safe(edited_df, UPLOAD_PATH, sheet_to_edit)
             timezone = pytz.timezone("Asia/Kolkata")
             upload_time = datetime.now(timezone).strftime("%d-%m-%Y %H:%M:%S")
             save_timestamp(upload_time)
@@ -280,6 +261,6 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# Show Inventory Viewer if that view is selected
-if view_option == "Inventory Viewer":
+# Show Inventory Viewer
+if view_option=="Inventory Viewer":
     show_inventory_viewer()
