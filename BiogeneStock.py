@@ -7,7 +7,7 @@ import pytz
 import requests
 import base64
 import io
-from openpyxl import load_workbook
+from openpyxl import load_workbook, Workbook
 import tempfile
 import shutil
 
@@ -39,16 +39,28 @@ def is_valid_excel(file_path):
 
 def save_excel_with_sheet_safe(df, path, sheet_name):
     tmp_path = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx").name
+
     if os.path.exists(path):
         book = load_workbook(path)
+        # Remove sheet if it exists
         if sheet_name in book.sheetnames:
             std = book[sheet_name]
             book.remove(std)
-        with pd.ExcelWriter(tmp_path, engine="openpyxl") as writer:
-            writer.book = book
-            df.to_excel(writer, sheet_name=sheet_name, index=False)
+        # Ensure at least one sheet exists
+        if not book.sheetnames:
+            book.create_sheet("TempSheet")
     else:
-        df.to_excel(tmp_path, sheet_name=sheet_name, index=False)
+        book = Workbook()
+
+    # Save new df
+    with pd.ExcelWriter(tmp_path, engine="openpyxl") as writer:
+        writer.book = book
+        df.to_excel(writer, sheet_name=sheet_name, index=False)
+        # Remove temporary sheet if exists and is not the one being written
+        if "TempSheet" in writer.book.sheetnames and sheet_name != "TempSheet":
+            tmp_sheet = writer.book["TempSheet"]
+            writer.book.remove(tmp_sheet)
+
     shutil.move(tmp_path, path)
 
 # -------------------------
@@ -210,25 +222,25 @@ else:
     xl = pd.ExcelFile(UPLOAD_PATH)
 
 # -------------------------
-# Inventory Viewer
+# Inventory Viewer Function
 # -------------------------
 def show_inventory_viewer():
-    allowed_sheets = [s for s in ["Current Inventory", "Item Wise Current Inventory", "Dispatches"] if s in xl.sheet_names]
+    allowed_sheets = [s for s in ["Current Inventory","Item Wise Current Inventory","Dispatches"] if s in xl.sheet_names]
     if not allowed_sheets:
         st.error("❌ No valid sheets found in file!")
         return
     sheet_name = inventory_type
     df = xl.parse(sheet_name)
     st.success(f"✅ **{sheet_name}** Loaded Successfully!")
-    check_col = find_column(df, ["Check", "Location", "Status", "Type", "StockType"])
-    tab1, tab2, tab3, tab4 = st.tabs(["🏠 Local", "🚚 Outstation", "📦 Other", "🔍 Search"])
-    if check_col and sheet_name != "Dispatches":
+    check_col = find_column(df, ["Check","Location","Status","Type","StockType"])
+    tab1,tab2,tab3,tab4 = st.tabs(["🏠 Local","🚚 Outstation","📦 Other","🔍 Search"])
+    if check_col and sheet_name!="Dispatches":
         check_vals = df[check_col].astype(str).str.strip().str.lower()
         with tab1: st.subheader("🏠 Local Inventory"); st.dataframe(df[check_vals=="local"], use_container_width=True, height=600)
         with tab2: st.subheader("🚚 Outstation Inventory"); st.dataframe(df[check_vals=="outstation"], use_container_width=True, height=600)
         with tab3: st.subheader("📦 Other Inventory"); st.dataframe(df[~check_vals.isin(["local","outstation"])], use_container_width=True, height=600)
     else:
-        for tab,msg in zip([tab1,tab2], ["No Inventory Data","No Dispatch Data"]):
+        for tab,msg in zip([tab1,tab2],["No Inventory Data","No Dispatch Data"]):
             with tab: st.subheader("📄 "+msg); st.warning("There is no 'Check' column found in the data.")
 
 # -------------------------
