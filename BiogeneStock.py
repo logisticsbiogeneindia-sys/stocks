@@ -61,6 +61,7 @@ st.markdown(f"""
 # Sidebar
 # -------------------------
 st.sidebar.header("⚙️ Settings")
+view_option = st.sidebar.radio("Choose View", ["Inventory Viewer", "Full Control"])
 inventory_type = st.sidebar.selectbox("Choose Inventory Type", ["Current Inventory", "Item Wise Current Inventory"])
 password = st.sidebar.text_input("Enter Password to Upload/Download File", type="password")
 correct_password = st.secrets["PASSWORD"]
@@ -184,29 +185,151 @@ else:
     xl = pd.ExcelFile(UPLOAD_PATH)
 
 # -------------------------
-# Editable Sheets
+# Inventory Viewer (Original Views)
 # -------------------------
-sheet_to_edit = st.sidebar.selectbox("Select sheet to edit", xl.sheet_names)
-df_edit = xl.parse(sheet_to_edit)
-st.subheader(f"✏️ Editing Sheet: {sheet_to_edit}")
+if view_option == "Inventory Viewer":
+    allowed_sheets = [s for s in ["Current Inventory", "Item Wise Current Inventory", "Dispatches"] if s in xl.sheet_names]
+    if not allowed_sheets:
+        st.error("❌ No valid sheets found in file!")
+    else:
+        sheet_name = inventory_type
+        df = xl.parse(sheet_name)
+        st.success(f"✅ **{sheet_name}** Loaded Successfully!")
+        check_col = find_column(df, ["Check", "Location", "Status", "Type", "StockType"])
 
-edited_df = st.data_editor(df_edit, num_rows="dynamic", use_container_width=True, height=600)
+        tab1, tab2, tab3, tab4 = st.tabs(["🏠 Local", "🚚 Outstation", "📦 Other", "🔍 Search"])
 
-if st.sidebar.button(f"💾 Save Changes to {sheet_to_edit}"):
-    with st.spinner("Saving changes..."):
-        # Save back to Excel
-        with pd.ExcelWriter(UPLOAD_PATH, engine="openpyxl", mode="a" if os.path.exists(UPLOAD_PATH) else "w") as writer:
-            edited_df.to_excel(writer, sheet_name=sheet_to_edit, index=False)
+        if check_col and sheet_name != "Dispatches":
+            check_vals = df[check_col].astype(str).str.strip().str.lower()
+            with tab1:
+                st.subheader("🏠 Local Inventory")
+                st.dataframe(df[check_vals == "local"], use_container_width=True, height=600)
+            with tab2:
+                st.subheader("🚚 Outstation Inventory")
+                st.dataframe(df[check_vals == "outstation"], use_container_width=True, height=600)
+            with tab3:
+                st.subheader("📦 Other Inventory")
+                st.dataframe(df[~check_vals.isin(["local", "outstation"])], use_container_width=True, height=600)
+        else:
+            for tab, msg in zip([tab1, tab2], ["No Inventory Data", "No Dispatch Data"]):
+                with tab:
+                    st.subheader("📄 " + msg)
+                    st.warning("There is no 'Check' column found in the data.")
 
-        # Update timestamp
-        timezone = pytz.timezone("Asia/Kolkata")
-        upload_time = datetime.now(timezone).strftime("%d-%m-%Y %H:%M:%S")
-        save_timestamp(upload_time)
+        # -------------------------
+        # Search Tab
+        # -------------------------
+        with tab4:
+            st.subheader("🔍 Search Inventory")
+            search_sheet = st.selectbox("Select sheet to search", allowed_sheets, index=0)
+            search_df = xl.parse(search_sheet)
 
-        # Push to GitHub
-        push_to_github(UPLOAD_PATH, "Master-Stock Sheet Original.xlsx", commit_message=f"Edited {sheet_to_edit}")
-        push_to_github(TIMESTAMP_PATH, "timestamp.txt", commit_message="Updated timestamp")
-        st.success("✅ Changes saved locally and pushed to GitHub!")
+            # Columns
+            item_col = find_column(search_df, ["Item Code", "ItemCode", "SKU", "Product Code"])
+            customer_col = find_column(search_df, ["Customer Name", "CustomerName", "Customer", "CustName"])
+            brand_col = find_column(search_df, ["Brand", "BrandName", "Product Brand", "Company"])
+            remarks_col = find_column(search_df, ["Remarks", "Remark", "Notes", "Comments"])
+            awb_col = find_column(search_df, ["AWB", "AWB Number", "Tracking Number"])
+            date_col = find_column(search_df, ["Date", "Dispatch Date", "Created On", "Order Date"])
+
+            df_filtered = search_df.copy()
+            search_performed = False
+
+            if search_sheet == "Current Inventory":
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    search_customer = st.text_input("Search by Customer Name").strip()
+                with col2:
+                    search_brand = st.text_input("Search by Brand").strip()
+                with col3:
+                    search_remarks = st.text_input("Search by Remarks").strip()
+
+                if search_customer and customer_col:
+                    search_performed = True
+                    df_filtered = df_filtered[df_filtered[customer_col].astype(str).str.contains(search_customer, case=False, na=False)]
+                if search_brand and brand_col:
+                    search_performed = True
+                    df_filtered = df_filtered[df_filtered[brand_col].astype(str).str.contains(search_brand, case=False, na=False)]
+                if search_remarks and remarks_col:
+                    search_performed = True
+                    df_filtered = df_filtered[df_filtered[remarks_col].astype(str).str.contains(search_remarks, case=False, na=False)]
+
+            elif search_sheet == "Item Wise Current Inventory":
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    search_item = st.text_input("Search by Item Code").strip()
+                with col2:
+                    search_customer = st.text_input("Search by Customer Name").strip()
+                with col3:
+                    search_brand = st.text_input("Search by Brand").strip()
+                with col4:
+                    search_remarks = st.text_input("Search by Remarks").strip()
+
+                if search_item and item_col:
+                    search_performed = True
+                    df_filtered = df_filtered[df_filtered[item_col].astype(str).str.contains(search_item, case=False, na=False)]
+                if search_customer and customer_col:
+                    search_performed = True
+                    df_filtered = df_filtered[df_filtered[customer_col].astype(str).str.contains(search_customer, case=False, na=False)]
+                if search_brand and brand_col:
+                    search_performed = True
+                    df_filtered = df_filtered[df_filtered[brand_col].astype(str).str.contains(search_brand, case=False, na=False)]
+                if search_remarks and remarks_col:
+                    search_performed = True
+                    df_filtered = df_filtered[df_filtered[remarks_col].astype(str).str.contains(search_remarks, case=False, na=False)]
+
+            elif search_sheet == "Dispatches":
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    date_range = st.date_input("Select Date Range", [])
+                with col2:
+                    search_awb = st.text_input("Search by AWB Number").strip()
+                with col3:
+                    search_customer = st.text_input("Search by Customer Name").strip()
+
+                if date_range and len(date_range) == 2 and date_col:
+                    start, end = date_range
+                    search_performed = True
+                    df_filtered[date_col] = pd.to_datetime(df_filtered[date_col], errors="coerce")
+                    df_filtered = df_filtered[(df_filtered[date_col] >= pd.to_datetime(start)) & (df_filtered[date_col] <= pd.to_datetime(end))]
+                if search_awb and awb_col:
+                    search_performed = True
+                    df_filtered = df_filtered[df_filtered[awb_col].astype(str).str.contains(search_awb, case=False, na=False)]
+                if search_customer and customer_col:
+                    search_performed = True
+                    df_filtered = df_filtered[df_filtered[customer_col].astype(str).str.contains(search_customer, case=False, na=False)]
+
+            if search_performed:
+                if df_filtered.empty:
+                    st.warning("No matching records found.")
+                else:
+                    st.dataframe(df_filtered, use_container_width=True, height=600)
+
+# -------------------------
+# Full Control (Editable Sheets)
+# -------------------------
+elif view_option == "Full Control":
+    sheet_to_edit = st.selectbox("Select sheet to edit", xl.sheet_names)
+    df_edit = xl.parse(sheet_to_edit)
+    st.subheader(f"✏️ Editing Sheet: {sheet_to_edit}")
+
+    edited_df = st.data_editor(df_edit, num_rows="dynamic", use_container_width=True, height=600)
+
+    if st.sidebar.button(f"💾 Save Changes to {sheet_to_edit}"):
+        with st.spinner("Saving changes..."):
+            # Save back to Excel
+            with pd.ExcelWriter(UPLOAD_PATH, engine="openpyxl", mode="a" if os.path.exists(UPLOAD_PATH) else "w") as writer:
+                edited_df.to_excel(writer, sheet_name=sheet_to_edit, index=False)
+
+            # Update timestamp
+            timezone = pytz.timezone("Asia/Kolkata")
+            upload_time = datetime.now(timezone).strftime("%d-%m-%Y %H:%M:%S")
+            save_timestamp(upload_time)
+
+            # Push to GitHub
+            push_to_github(UPLOAD_PATH, "Master-Stock Sheet Original.xlsx", commit_message=f"Edited {sheet_to_edit}")
+            push_to_github(TIMESTAMP_PATH, "timestamp.txt", commit_message="Updated timestamp")
+            st.success("✅ Changes saved locally and pushed to GitHub!")
 
 # -------------------------
 # Footer
