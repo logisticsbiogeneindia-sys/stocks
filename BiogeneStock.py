@@ -132,6 +132,7 @@ if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
 
 if not st.session_state.logged_in:
+    # Only show login/sign-up pages if not logged in
     page = st.selectbox("Choose a page", ["Login", "Sign Up"])
     if page == "Login":
         show_login_page()
@@ -149,6 +150,7 @@ else:
     # Load Inventory Data if Logged In
     if st.session_state.role in ["admin", "user"]:
         file_path = "your_inventory_file.xlsx"  # Update with the actual path
+
         if os.path.exists(file_path):
             xl = load_inventory_data(file_path)
 
@@ -174,3 +176,4 @@ else:
                 st.dataframe(xl.parse("Sheet1"))
 
     st.markdown("""<div class="footer">© 2025 Biogene India | Created By Mohit Sharma</div>""", unsafe_allow_html=True)
+
