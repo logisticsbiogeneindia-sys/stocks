@@ -247,3 +247,7 @@ else:
 # Footer
 # -------------------------
 st.markdown("""
+<div class="footer">
+    © 2025 Biogene India | Created By Mohit Sharma
+</div>
+""", unsafe_allow_html=True)
