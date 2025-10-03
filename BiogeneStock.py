@@ -2,16 +2,38 @@ import streamlit as st
 import pandas as pd
 import os
 import re
+import hashlib
 from datetime import datetime
 import pytz
 import requests
 import base64
 import io
-import bcrypt
-import sqlite3
 
 # -------------------------
-# Helper Functions
+# User Authentication Helpers
+# -------------------------
+
+# In-memory user storage (You can replace this with a database for production)
+users_db = {
+    "admin": {"password": "admin", "role": "admin"}
+}
+
+def hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode()).hexdigest()
+
+def check_credentials(username: str, password: str) -> bool:
+    if username in users_db:
+        return users_db[username]["password"] == hash_password(password)
+    return False
+
+def create_user(username: str, password: str, role: str = "user"):
+    if username in users_db:
+        return "User already exists"
+    users_db[username] = {"password": hash_password(password), "role": role}
+    return f"User {username} created successfully"
+
+# -------------------------
+# Helpers
 # -------------------------
 def normalize(s: str) -> str:
     return re.sub(r'[^a-z0-9]', '', str(s).lower())
@@ -44,149 +66,184 @@ body {background-color: #f8f9fa; font-family: "Helvetica Neue", sans-serif;}
 """, unsafe_allow_html=True)
 
 # -------------------------
-# Database for Users (SQLite)
+# Logo + Title Navbar
 # -------------------------
-conn = sqlite3.connect("users.db")
-cursor = conn.cursor()
+logo_path = "logonew.png"
+if os.path.exists(logo_path):
+    logo_html = f'<img src="data:image/png;base64,{base64.b64encode(open(logo_path,"rb").read()).decode()}" alt="Logo">'
+else:
+    logo_html = ""
 
-# Create users table if not exists
-cursor.execute("""
-    CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY,
-        username TEXT UNIQUE,
-        password TEXT,
-        role TEXT
-    )
-""")
-
-def create_user(username, password, role="user"):
-    hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
-    cursor.execute("INSERT INTO users (username, password, role) VALUES (?, ?, ?)", (username, hashed_password, role))
-    conn.commit()
-
-def verify_user(username, password):
-    cursor.execute("SELECT * FROM users WHERE username = ?", (username,))
-    user = cursor.fetchone()
-    if user and bcrypt.checkpw(password.encode('utf-8'), user[2].encode('utf-8')):
-        return user
-    return None
-
-def get_user_role(username):
-    cursor.execute("SELECT role FROM users WHERE username = ?", (username,))
-    user = cursor.fetchone()
-    return user[0] if user else None
+st.markdown(f"""
+<div class="navbar">
+    {logo_html}
+    <h1>📦 Biogene India - Inventory Viewer</h1>
+</div>
+""", unsafe_allow_html=True)
 
 # -------------------------
-# Sidebar - User Login or Admin Panel
+# User Authentication (Login & Signup)
 # -------------------------
-st.sidebar.header("⚙️ Settings")
-role = None
-username = st.sidebar.text_input("Username", "")
-password = st.sidebar.text_input("Password", type="password")
 
-def user_login():
-    global role
-    if username and password:
-        user = verify_user(username, password)
-        if user:
-            role = get_user_role(username)
+def show_login_page():
+    st.title("Login to Biogene India - Inventory Viewer")
+    st.markdown("### Please enter your credentials to log in")
+
+    login_form = st.form("Login Form")
+    with login_form:
+        username = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+        submit_button = st.form_submit_button("Login")
+        
+    if submit_button:
+        if check_credentials(username, password):
             st.session_state.logged_in = True
             st.session_state.username = username
-            st.session_state.role = role
-            st.sidebar.success(f"Welcome {username} ({role})!")
+            st.session_state.role = users_db[username]["role"]
+            st.success(f"Welcome {username}!")
         else:
-            st.sidebar.error("Invalid username or password")
+            st.error("Invalid credentials. Please try again.")
 
+def show_signup_page():
+    st.title("Sign Up for Biogene India - Inventory Viewer")
+    st.markdown("### Create an account")
+
+    signup_form = st.form("Signup Form")
+    with signup_form:
+        new_username = st.text_input("New Username")
+        new_password = st.text_input("New Password", type="password")
+        confirm_password = st.text_input("Confirm Password", type="password")
+        submit_button = st.form_submit_button("Sign Up")
+        
+    if submit_button:
+        if new_password != confirm_password:
+            st.error("Passwords do not match.")
+        elif new_username in users_db:
+            st.error(f"Username {new_username} already exists.")
+        else:
+            result = create_user(new_username, new_password)
+            st.success(result)
+
+# -------------------------
+# Admin Panel
+# -------------------------
 def admin_panel():
-    st.title("Admin Panel")
-    uploaded_file = st.file_uploader("Upload Excel File", type=["xlsx", "xls"])
+    if st.session_state.get("role") == "admin":
+        st.title("Admin Panel")
+        st.markdown("### Create a new user")
 
-    if uploaded_file is not None:
-        with st.spinner("Uploading file..."):
-            with open("Master-Stock Sheet Original.xlsx", "wb") as f:
-                f.write(uploaded_file.getbuffer())
-            st.sidebar.success(f"File uploaded successfully!")
+        admin_form = st.form("Admin Form")
+        with admin_form:
+            new_user = st.text_input("New Username")
+            new_user_password = st.text_input("New Password", type="password")
+            user_role = st.selectbox("Role", ["user", "admin"])
+            submit_button = st.form_submit_button("Create User")
+
+        if submit_button:
+            result = create_user(new_user, new_user_password, user_role)
+            st.success(result)
+    else:
+        st.error("You must be logged in as admin to access this page.")
+
+# -------------------------
+# Inventory Data Load and Display
+# -------------------------
+
+UPLOAD_PATH = "Master-Stock Sheet Original.xlsx"
+TIMESTAMP_PATH = "timestamp.txt"
+FILENAME_PATH = "uploaded_filename.txt"
+
+def load_data_from_github():
+    url = f"https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/{UPLOAD_PATH.replace(' ', '%20')}"
+    r = requests.get(url)
+    return pd.ExcelFile(io.BytesIO(r.content))
+
+@st.cache_data
+def load_data():
+    try:
+        xl = pd.ExcelFile(UPLOAD_PATH)
+    except Exception as e:
+        st.error(f"Error loading Excel file: {e}")
+        return None
+    return xl
+
+def show_inventory_tabs(xl):
+    allowed_sheets = [s for s in ["Current Inventory", "Item Wise Current Inventory", "Dispatches"] if s in xl.sheet_names]
+    if not allowed_sheets:
+        st.error("No valid sheets found in file!")
+    else:
+        sheet_name = st.sidebar.selectbox("Choose Inventory Type", allowed_sheets)
+        df = xl.parse(sheet_name)
+        st.success(f"**{sheet_name}** Loaded Successfully!")
+
+        tab1, tab2, tab3, tab4 = st.tabs(["🏠 Local", "🚚 Outstation", "📦 Other", "🔍 Search"])
+
+        # Display Data based on "Check" column
+        check_col = find_column(df, ["Check", "Location", "Status", "Type", "StockType"])
+        if check_col:
+            check_vals = df[check_col].astype(str).str.strip().str.lower()
+            with tab1:
+                st.subheader("🏠 Local Inventory")
+                st.dataframe(df[check_vals == "local"], use_container_width=True, height=600)
+            with tab2:
+                st.subheader("🚚 Outstation Inventory")
+                st.dataframe(df[check_vals == "outstation"], use_container_width=True, height=600)
+            with tab3:
+                st.subheader("📦 Other Inventory")
+                st.dataframe(df[~check_vals.isin(["local", "outstation"])], use_container_width=True, height=600)
+        else:
+            with tab1:
+                st.subheader("📄 No Inventory Data")
+                st.warning("There is no 'Check' column found in the data.")
+            with tab2:
+                st.subheader("📄 No Dispatch Data")
+                st.warning("Please check your inventory for errors or missing columns.")
+
+        # Search Tab
+        with tab4:
+            st.subheader("🔍 Search Inventory")
+            search_df = xl.parse(sheet_name)
+            search_performed = False
+            search_column = st.text_input("Enter Column Name to Search", "").strip()
+            if search_column:
+                search_performed = True
+                search_results = search_df[search_df.apply(lambda row: row.astype(str).str.contains(search_column, case=False, na=False).any(), axis=1)]
+                if search_results.empty:
+                    st.warning("No matching records found.")
+                else:
+                    st.dataframe(search_results)
     
-    # Admin can edit any point of data and approve visibility
-    df = pd.read_excel("Master-Stock Sheet Original.xlsx")
-    st.write("Admin can view and edit data here")
-
-def user_dashboard():
-    st.title("User Dashboard")
-    df = pd.read_excel("Master-Stock Sheet Original.xlsx")
-    st.write("Data is available based on your permissions.")
-    # Add filtering, search, etc.
-
 # -------------------------
-# Login and Roles
+# Main App Flow
 # -------------------------
-if "logged_in" in st.session_state and st.session_state.logged_in:
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+
+if not st.session_state.logged_in:
+    page = st.selectbox("Choose a page", ["Login", "Sign Up"])
+    if page == "Login":
+        show_login_page()
+    elif page == "Sign Up":
+        show_signup_page()
+else:
+    st.sidebar.header(f"Welcome {st.session_state.username}")
+    
     if st.session_state.role == "admin":
         admin_panel()
-    else:
-        user_dashboard()
-else:
-    action = st.sidebar.radio("Choose Action", ["Login", "Sign Up"])
-    
-    if action == "Login":
-        user_login()
-    elif action == "Sign Up":
-        new_username = st.sidebar.text_input("New Username", "")
-        new_password = st.sidebar.text_input("New Password", type="password")
-        confirm_password = st.sidebar.text_input("Confirm Password", type="password")
-        
-        if st.sidebar.button("Create Account"):
-            if new_password == confirm_password:
-                create_user(new_username, new_password)
-                st.sidebar.success(f"User {new_username} created successfully!")
-            else:
-                st.sidebar.error("Passwords do not match.")
-                
-# -------------------------
-# Data Tabs (Local, Outstation, Others)
-# -------------------------
-if "logged_in" in st.session_state and st.session_state.logged_in:
-    xl = pd.ExcelFile("Master-Stock Sheet Original.xlsx")
-    allowed_sheets = xl.sheet_names
-    sheet_name = st.selectbox("Select Inventory Sheet", allowed_sheets)
-    df = xl.parse(sheet_name)
-    
-    tab1, tab2, tab3, tab4 = st.tabs(["🏠 Local", "🚚 Outstation", "📦 Other", "🔍 Search"])
-    
-    check_col = find_column(df, ["Check", "Location", "Status", "Type", "StockType"])
 
-    if check_col:
-        check_vals = df[check_col].astype(str).str.strip().str.lower()
-        
-        with tab1:
-            st.subheader("🏠 Local Inventory")
-            st.dataframe(df[check_vals == "local"], use_container_width=True)
-        
-        with tab2:
-            st.subheader("🚚 Outstation Inventory")
-            st.dataframe(df[check_vals == "outstation"], use_container_width=True)
-        
-        with tab3:
-            st.subheader("📦 Other Inventory")
-            st.dataframe(df[~check_vals.isin(["local", "outstation"])], use_container_width=True)
+    # Upload and view inventory if logged in
+    uploaded_file = st.sidebar.file_uploader("Upload Excel File", type=["xlsx", "xls"])
+
+    if uploaded_file:
+        with open(UPLOAD_PATH, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+        st.success("File uploaded successfully!")
     
-    # Search Tab
-    with tab4:
-        st.subheader("🔍 Search Inventory")
-        search_df = df.copy()
-        search_term = st.text_input("Search term")
-        if search_term:
-            search_result = search_df[search_df.apply(lambda row: row.astype(str).str.contains(search_term, case=False).any(), axis=1)]
-            if not search_result.empty:
-                st.dataframe(search_result)
-            else:
-                st.warning("No matching results found.")
-    
+    xl = load_data()
+    if xl:
+        show_inventory_tabs(xl)
+
 # -------------------------
 # Footer
 # -------------------------
 st.markdown("""
-<div class="footer">
-    © 2025 Biogene India | Created By Mohit Sharma
-</div>
-""", unsafe_allow_html=True)
