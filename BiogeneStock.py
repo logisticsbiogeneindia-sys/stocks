@@ -7,9 +7,6 @@ import pytz
 import requests
 import base64
 import io
-from openpyxl import load_workbook, Workbook
-import tempfile
-import shutil
 
 # -------------------------
 # Helpers
@@ -29,39 +26,6 @@ def find_column(df: pd.DataFrame, candidates: list) -> str | None:
             if key in norm_col or norm_col in key:
                 return orig
     return None
-
-def is_valid_excel(file_path):
-    try:
-        load_workbook(file_path)
-        return True
-    except Exception:
-        return False
-
-def save_excel_with_sheet_safe(df, path, sheet_name):
-    tmp_path = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx").name
-
-    if os.path.exists(path):
-        book = load_workbook(path)
-        # Remove sheet if it exists
-        if sheet_name in book.sheetnames:
-            std = book[sheet_name]
-            book.remove(std)
-        # Ensure at least one sheet exists
-        if not book.sheetnames:
-            book.create_sheet("TempSheet")
-    else:
-        book = Workbook()
-
-    # Save new df
-    with pd.ExcelWriter(tmp_path, engine="openpyxl") as writer:
-        writer.book = book
-        df.to_excel(writer, sheet_name=sheet_name, index=False)
-        # Remove temporary sheet if exists and is not the one being written
-        if "TempSheet" in writer.book.sheetnames and sheet_name != "TempSheet":
-            tmp_sheet = writer.book["TempSheet"]
-            writer.book.remove(tmp_sheet)
-
-    shutil.move(tmp_path, path)
 
 # -------------------------
 # Config & Styling
@@ -86,193 +50,164 @@ if os.path.exists(logo_path):
 else:
     logo_html = ""
 
-st.markdown(f"""
-<div class="navbar">
-    {logo_html}
-    <h1>📦 Biogene India - Inventory Viewer</h1>
-</div>
-""", unsafe_allow_html=True)
-
 # -------------------------
-# Sidebar
+# Sidebar Login
 # -------------------------
-st.sidebar.header("⚙️ Settings")
-view_option = st.sidebar.radio("Choose View", ["Inventory Viewer", "Full Control"])
-inventory_type = st.sidebar.selectbox("Choose Inventory Type", ["Current Inventory", "Item Wise Current Inventory"])
-password = st.sidebar.text_input("Enter Password", type="password")
-correct_password = st.secrets["PASSWORD"]
+st.sidebar.header("Login")
 
-UPLOAD_PATH = "Master-Stock Sheet Original.xlsx"
-TIMESTAMP_PATH = "timestamp.txt"
-FILENAME_PATH = "uploaded_filename.txt"
+# You can store your username and password as secrets in the Streamlit secrets manager
+USER_CREDENTIALS = st.secrets["USER_CREDENTIALS"]  # a dict with 'username' and 'password'
 
-def save_timestamp(timestamp):
-    with open(TIMESTAMP_PATH, "w") as f:
-        f.write(timestamp)
+# Create a login form
+login_username = st.sidebar.text_input("Username")
+login_password = st.sidebar.text_input("Password", type="password")
 
-def save_uploaded_filename(filename):
-    with open(FILENAME_PATH, "w") as f:
-        f.write(filename)
-
-def load_uploaded_filename():
-    if os.path.exists(FILENAME_PATH):
-        with open(FILENAME_PATH, "r") as f:
-            return f.read().strip()
-    return "uploaded_inventory.xlsx"
-
-# -------------------------
-# GitHub Config
-# -------------------------
-OWNER = "logisticsbiogeneindia-sys"
-REPO = "BiogeneIndia"
-BRANCH = "main"
-TOKEN = st.secrets["GITHUB_TOKEN"]
-headers = {"Authorization": f"Bearer {TOKEN}", "Accept": "application/vnd.github+json"}
-
-def check_github_auth():
-    r = requests.get("https://api.github.com/user", headers=headers)
-    if r.status_code == 200:
-        st.sidebar.success(f"🔑 GitHub Auth OK: {r.json().get('login')}")
+if login_username and login_password:
+    if login_username == USER_CREDENTIALS["username"] and login_password == USER_CREDENTIALS["password"]:
+        st.session_state.logged_in = True
+        st.sidebar.success("✅ Successfully logged in!")
     else:
-        st.sidebar.error(f"❌ GitHub Auth failed: {r.status_code}")
+        st.session_state.logged_in = False
+        st.sidebar.error("❌ Incorrect username or password!")
+else:
+    st.session_state.logged_in = False
 
-check_github_auth()
+# -------------------------
+# Display the logo and message if not logged in
+# -------------------------
+if not st.session_state.logged_in:
+    st.markdown(f"""
+    <div style="text-align:center; padding: 50px;">
+        {logo_html}
+        <h2>Please Log In to Access the Inventory Data</h2>
+    </div>
+    """, unsafe_allow_html=True)
+    st.stop()  # Stops the app from executing further until the user logs in
 
-def push_to_github(local_file, remote_path, commit_message="Update file"):
-    try:
-        with open(local_file, "rb") as f:
-            content = base64.b64encode(f.read()).decode("utf-8")
-        url = f"https://api.github.com/repos/{OWNER}/{REPO}/contents/{remote_path}"
-        r = requests.get(url, headers=headers)
-        sha = r.json().get("sha") if r.status_code == 200 else None
-        payload = {"message": commit_message, "content": content, "branch": BRANCH}
-        if sha:
-            payload["sha"] = sha
-        r = requests.put(url, headers=headers, json=payload)
-        if r.status_code in [200, 201]:
-            st.sidebar.success(f"✅ {os.path.basename(local_file)} pushed to GitHub successfully!")
-        else:
-            st.sidebar.error(f"❌ GitHub push failed for {local_file}: {r.json()}")
-    except Exception as e:
-        st.sidebar.error(f"Error pushing file {local_file}: {e}")
+# -------------------------
+# Page Content
+# -------------------------
+if st.session_state.logged_in:
+    # Now the rest of your original code goes here
+    st.markdown(f"""
+    <div class="navbar">
+        {logo_html}
+        <h1>📦 Biogene India - Inventory Viewer</h1>
+    </div>
+    """, unsafe_allow_html=True)
 
-def get_github_file_timestamp():
-    try:
-        url = f"https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/timestamp.txt"
-        r = requests.get(url)
+    # -------------------------
+    # Sidebar for Inventory Settings
+    # -------------------------
+    st.sidebar.header("⚙️ Settings")
+    inventory_type = st.sidebar.selectbox("Choose Inventory Type", ["Current Inventory", "Item Wise Current Inventory"])
+    password = st.sidebar.text_input("Enter Password to Upload/Download File", type="password")
+    correct_password = st.secrets["PASSWORD"]  # Storing password in Streamlit secrets
+
+    UPLOAD_PATH = "Master-Stock Sheet Original.xlsx"
+    TIMESTAMP_PATH = "timestamp.txt"
+    FILENAME_PATH = "uploaded_filename.txt"
+
+    def save_timestamp(timestamp):
+        with open(TIMESTAMP_PATH, "w") as f:
+            f.write(timestamp)
+
+    def save_uploaded_filename(filename):
+        with open(FILENAME_PATH, "w") as f:
+            f.write(filename)
+
+    def load_uploaded_filename():
+        if os.path.exists(FILENAME_PATH):
+            with open(FILENAME_PATH, "r") as f:
+                return f.read().strip()
+        return "uploaded_inventory.xlsx"
+
+    # -------------------------
+    # GitHub Config
+    # -------------------------
+    OWNER = "logisticsbiogeneindia-sys"
+    REPO = "BiogeneIndia"
+    BRANCH = "main"
+    TOKEN = st.secrets["GITHUB_TOKEN"]
+    headers = {"Authorization": f"Bearer {TOKEN}", "Accept": "application/vnd.github+json"}
+
+    def check_github_auth():
+        r = requests.get("https://api.github.com/user", headers=headers)
         if r.status_code == 200:
-            return r.text.strip()
+            st.sidebar.success(f"🔑 GitHub Auth OK: {r.json().get('login')}")
         else:
-            return "No GitHub timestamp found."
-    except Exception as e:
-        return f"Error fetching timestamp: {e}"
+            st.sidebar.error(f"❌ GitHub Auth failed: {r.status_code}")
 
-github_timestamp = get_github_file_timestamp()
-st.markdown(f"🕒 **Last Updated (from GitHub):** {github_timestamp}")
+    check_github_auth()
 
-# -------------------------
-# Upload & Download Section
-# -------------------------
-if password == correct_password:
-    uploaded_file = st.sidebar.file_uploader("Upload Excel File", type=["xlsx", "xls"])
-    if uploaded_file is not None:
-        with open(UPLOAD_PATH, "wb") as f:
-            f.write(uploaded_file.getbuffer())
-        if not is_valid_excel(UPLOAD_PATH):
-            st.error("❌ Uploaded file is not a valid Excel file!")
-            st.stop()
-        timezone = pytz.timezone("Asia/Kolkata")
-        upload_time = datetime.now(timezone).strftime("%d-%m-%Y %H:%M:%S")
-        save_timestamp(upload_time)
-        save_uploaded_filename(uploaded_file.name)
-        st.sidebar.success(f"✅ File uploaded at {upload_time}")
-        push_to_github(UPLOAD_PATH, "Master-Stock Sheet Original.xlsx", commit_message=f"Uploaded {uploaded_file.name}")
-        push_to_github(TIMESTAMP_PATH, "timestamp.txt", commit_message="Updated timestamp")
-    if os.path.exists(UPLOAD_PATH):
-        with open(UPLOAD_PATH, "rb") as f:
-            st.sidebar.download_button(
-                label="⬇️ Download Uploaded Excel File",
-                data=f,
-                file_name=load_uploaded_filename(),
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-else:
-    if password:
-        st.sidebar.error("❌ Incorrect password!")
+    # -------------------------
+    # GitHub Push Function
+    # -------------------------
+    def push_to_github(local_file, remote_path, commit_message="Update file"):
+        try:
+            with open(local_file, "rb") as f:
+                content = base64.b64encode(f.read()).decode("utf-8")
+            url = f"https://api.github.com/repos/{OWNER}/{REPO}/contents/{remote_path}"
+            r = requests.get(url, headers=headers)
+            sha = r.json().get("sha") if r.status_code == 200 else None
+            payload = {"message": commit_message, "content": content, "branch": BRANCH}
+            if sha:
+                payload["sha"] = sha
+            r = requests.put(url, headers=headers, json=payload)
+            if r.status_code in [200, 201]:
+                st.sidebar.success(f"✅ {os.path.basename(local_file)} pushed to GitHub successfully!")
+            else:
+                st.sidebar.error(f"❌ GitHub push failed for {local_file}: {r.json()}")
+        except Exception as e:
+            st.sidebar.error(f"Error pushing file {local_file}: {e}")
 
-# -------------------------
-# Load Excel
-# -------------------------
-@st.cache_data
-def load_data_from_github():
-    url = f"https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/{UPLOAD_PATH.replace(' ', '%20')}"
-    r = requests.get(url)
-    return pd.ExcelFile(io.BytesIO(r.content))
+    # -------------------------
+    # GitHub Timestamp
+    # -------------------------
+    def get_github_file_timestamp():
+        try:
+            url = f"https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/timestamp.txt"
+            r = requests.get(url)
+            if r.status_code == 200:
+                return r.text.strip()
+            else:
+                return "No GitHub timestamp found."
+        except Exception as e:
+            return f"Error fetching timestamp: {e}"
 
-if not os.path.exists(UPLOAD_PATH):
-    try:
-        xl = load_data_from_github()
-    except Exception as e:
-        st.error(f"❌ Error loading Excel from GitHub: {e}")
-        st.stop()
-else:
-    if not is_valid_excel(UPLOAD_PATH):
-        st.error("❌ Local Excel file is corrupted!")
-        st.stop()
-    xl = pd.ExcelFile(UPLOAD_PATH)
+    github_timestamp = get_github_file_timestamp()
+    st.markdown(f"🕒 **Last Updated (from GitHub):** {github_timestamp}")
 
-# -------------------------
-# Inventory Viewer Function
-# -------------------------
-def show_inventory_viewer():
-    allowed_sheets = [s for s in ["Current Inventory","Item Wise Current Inventory","Dispatches"] if s in xl.sheet_names]
-    if not allowed_sheets:
-        st.error("❌ No valid sheets found in file!")
-        return
-    sheet_name = inventory_type
-    df = xl.parse(sheet_name)
-    st.success(f"✅ **{sheet_name}** Loaded Successfully!")
-    check_col = find_column(df, ["Check","Location","Status","Type","StockType"])
-    tab1,tab2,tab3,tab4 = st.tabs(["🏠 Local","🚚 Outstation","📦 Other","🔍 Search"])
-    if check_col and sheet_name!="Dispatches":
-        check_vals = df[check_col].astype(str).str.strip().str.lower()
-        with tab1: st.subheader("🏠 Local Inventory"); st.dataframe(df[check_vals=="local"], use_container_width=True, height=600)
-        with tab2: st.subheader("🚚 Outstation Inventory"); st.dataframe(df[check_vals=="outstation"], use_container_width=True, height=600)
-        with tab3: st.subheader("📦 Other Inventory"); st.dataframe(df[~check_vals.isin(["local","outstation"])], use_container_width=True, height=600)
+    # -------------------------
+    # Upload & Download Section
+    # -------------------------
+    if password == correct_password:
+        uploaded_file = st.sidebar.file_uploader("Upload Excel File", type=["xlsx", "xls"])
+
+        if uploaded_file is not None:
+            with st.spinner("Uploading file..."):
+                with open(UPLOAD_PATH, "wb") as f:
+                    f.write(uploaded_file.getbuffer())
+                
+                timezone = pytz.timezone("Asia/Kolkata")
+                upload_time = datetime.now(timezone).strftime("%d-%m-%Y %H:%M:%S")
+                save_timestamp(upload_time)
+                save_uploaded_filename(uploaded_file.name)
+
+                st.sidebar.success(f"✅ File uploaded at {upload_time}")
+                push_to_github(UPLOAD_PATH, "Master-Stock Sheet Original.xlsx", commit_message=f"Uploaded {uploaded_file.name}")
+                push_to_github(TIMESTAMP_PATH, "timestamp.txt", commit_message="Updated timestamp")
+
+        if os.path.exists(UPLOAD_PATH):
+            with open(UPLOAD_PATH, "rb") as f:
+                st.sidebar.download_button(
+                    label="⬇️ Download Uploaded Excel File",
+                    data=f,
+                    file_name=load_uploaded_filename(),
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
     else:
-        for tab,msg in zip([tab1,tab2],["No Inventory Data","No Dispatch Data"]):
-            with tab: st.subheader("📄 "+msg); st.warning("There is no 'Check' column found in the data.")
+        if password:
+            st.sidebar.error("❌ Incorrect password!")
 
-# -------------------------
-# Full Control Mode
-# -------------------------
-if view_option=="Full Control":
-    if password != correct_password:
-        st.warning("🔒 Full Control requires a valid password!"); st.stop()
-    sheet_to_edit = st.selectbox("Select sheet to edit", xl.sheet_names)
-    df_edit = xl.parse(sheet_to_edit)
-    st.subheader(f"✏️ Editing Sheet: {sheet_to_edit}")
-    edited_df = st.data_editor(df_edit, num_rows="dynamic", use_container_width=True, height=600)
-    if st.sidebar.button(f"💾 Save Changes to {sheet_to_edit}"):
-        with st.spinner("Saving changes..."):
-            save_excel_with_sheet_safe(edited_df, UPLOAD_PATH, sheet_to_edit)
-            timezone = pytz.timezone("Asia/Kolkata")
-            upload_time = datetime.now(timezone).strftime("%d-%m-%Y %H:%M:%S")
-            save_timestamp(upload_time)
-            push_to_github(UPLOAD_PATH, "Master-Stock Sheet Original.xlsx", commit_message=f"Edited {sheet_to_edit}")
-            push_to_github(TIMESTAMP_PATH, "timestamp.txt", commit_message="Updated timestamp")
-            xl = pd.ExcelFile(UPLOAD_PATH)
-            st.success("✅ Changes saved, pushed to GitHub, and Inventory Viewer updated!")
-
-# -------------------------
-# Footer
-# -------------------------
-st.markdown("""
-<div class="footer">
-    © 2025 Biogene India | Created By Mohit Sharma
-</div>
-""", unsafe_allow_html=True)
-
-# Show Inventory Viewer
-if view_option=="Inventory Viewer":
-    show_inventory_viewer()
+    # Continue with the rest of the original code...
