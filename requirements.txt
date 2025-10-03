@@ -6,5 +6,4 @@ requests
 pytz
 openai
 fuzzywuzzy
-
-
+bcrypt
