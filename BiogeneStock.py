@@ -2,14 +2,16 @@ import streamlit as st
 import pandas as pd
 import os
 import re
-import base64
-import io
-import requests
 from datetime import datetime
 import pytz
+import requests
+import base64
+import io
+import bcrypt
+import sqlite3
 
 # -------------------------
-# Helpers
+# Helper Functions
 # -------------------------
 def normalize(s: str) -> str:
     return re.sub(r'[^a-z0-9]', '', str(s).lower())
@@ -28,7 +30,7 @@ def find_column(df: pd.DataFrame, candidates: list) -> str | None:
     return None
 
 # -------------------------
-# Streamlit Configuration
+# Config & Styling
 # -------------------------
 st.set_page_config(page_title="Biogene India - Inventory Viewer", layout="wide")
 st.markdown("""
@@ -42,162 +44,149 @@ body {background-color: #f8f9fa; font-family: "Helvetica Neue", sans-serif;}
 """, unsafe_allow_html=True)
 
 # -------------------------
-# Load secrets and password
+# Database for Users (SQLite)
 # -------------------------
-try:
-    GITHUB_TOKEN = st.secrets["GITHUB_TOKEN"]
-    PASSWORD = st.secrets["PASSWORD"]
-except KeyError:
-    st.error("Required secrets are missing. Please check your Streamlit secrets configuration.")
-    st.stop()
+conn = sqlite3.connect("users.db")
+cursor = conn.cursor()
 
-# -------------------------
-# Admin Login Logic (User Authentication)
-# -------------------------
-def login_user():
-    # Simple login form
-    st.sidebar.header("🔑 Login")
-    username = st.sidebar.text_input("Username")
-    password = st.sidebar.text_input("Password", type="password")
-    
-    # Define users and their roles
-    users = {
-        "admin": {"password": "adminpassword", "role": "Admin"},
-        "editor": {"password": "editorpassword", "role": "Editor"},
-        "user1": {"password": "user1password", "role": "User"},
-        "user2": {"password": "user2password", "role": "User"},
-        "user3": {"password": "user3password", "role": "User"},
-        "user4": {"password": "user4password", "role": "User"},
-        "user5": {"password": "user5password", "role": "User"}
-    }
+# Create users table if not exists
+cursor.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY,
+        username TEXT UNIQUE,
+        password TEXT,
+        role TEXT
+    )
+""")
 
-    if username in users and password == users[username]["password"]:
-        st.session_state.username = username
-        st.session_state.role = users[username]["role"]
-        st.success(f"Welcome, {username} ({st.session_state.role})!")
-        return True
-    elif username:
-        st.sidebar.error("Invalid username or password.")
-        return False
-    return False
+def create_user(username, password, role="user"):
+    hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+    cursor.execute("INSERT INTO users (username, password, role) VALUES (?, ?, ?)", (username, hashed_password, role))
+    conn.commit()
 
-# Only allow users with valid login to access the app
-if not login_user():
-    st.stop()
+def verify_user(username, password):
+    cursor.execute("SELECT * FROM users WHERE username = ?", (username,))
+    user = cursor.fetchone()
+    if user and bcrypt.checkpw(password.encode('utf-8'), user[2].encode('utf-8')):
+        return user
+    return None
+
+def get_user_role(username):
+    cursor.execute("SELECT role FROM users WHERE username = ?", (username,))
+    user = cursor.fetchone()
+    return user[0] if user else None
 
 # -------------------------
-# File Management and GitHub Integration
+# Sidebar - User Login or Admin Panel
 # -------------------------
-UPLOAD_PATH = "Master-Stock Sheet Original.xlsx"
-TIMESTAMP_PATH = "timestamp.txt"
-FILENAME_PATH = "uploaded_filename.txt"
+st.sidebar.header("⚙️ Settings")
+role = None
+username = st.sidebar.text_input("Username", "")
+password = st.sidebar.text_input("Password", type="password")
 
-def save_timestamp(timestamp):
-    with open(TIMESTAMP_PATH, "w") as f:
-        f.write(timestamp)
-
-def save_uploaded_filename(filename):
-    with open(FILENAME_PATH, "w") as f:
-        f.write(filename)
-
-def load_uploaded_filename():
-    if os.path.exists(FILENAME_PATH):
-        with open(FILENAME_PATH, "r") as f:
-            return f.read().strip()
-    return "uploaded_inventory.xlsx"
-
-def push_to_github(local_file, remote_path, commit_message="Update file"):
-    try:
-        with open(local_file, "rb") as f:
-            content = base64.b64encode(f.read()).decode("utf-8")
-        url = f"https://api.github.com/repos/logisticsbiogeneindia-sys/BiogeneIndia/contents/{remote_path}"
-        r = requests.get(url, headers={"Authorization": f"Bearer {GITHUB_TOKEN}"})
-        sha = r.json().get("sha") if r.status_code == 200 else None
-        payload = {"message": commit_message, "content": content, "branch": "main"}
-        if sha:
-            payload["sha"] = sha
-        r = requests.put(url, headers={"Authorization": f"Bearer {GITHUB_TOKEN}"}, json=payload)
-        if r.status_code in [200, 201]:
-            st.sidebar.success(f"✅ {os.path.basename(local_file)} pushed to GitHub successfully!")
+def user_login():
+    global role
+    if username and password:
+        user = verify_user(username, password)
+        if user:
+            role = get_user_role(username)
+            st.session_state.logged_in = True
+            st.session_state.username = username
+            st.session_state.role = role
+            st.sidebar.success(f"Welcome {username} ({role})!")
         else:
-            st.sidebar.error(f"❌ GitHub push failed for {local_file}: {r.json()}")
-    except Exception as e:
-        st.sidebar.error(f"Error pushing file {local_file}: {e}")
+            st.sidebar.error("Invalid username or password")
 
-# -------------------------
-# Upload Section (Admin and Editor Access)
-# -------------------------
-if st.session_state.role in ["Admin", "Editor"]:
-    uploaded_file = st.sidebar.file_uploader("Upload Excel File", type=["xlsx", "xls"])
+def admin_panel():
+    st.title("Admin Panel")
+    uploaded_file = st.file_uploader("Upload Excel File", type=["xlsx", "xls"])
+
     if uploaded_file is not None:
         with st.spinner("Uploading file..."):
-            with open(UPLOAD_PATH, "wb") as f:
+            with open("Master-Stock Sheet Original.xlsx", "wb") as f:
                 f.write(uploaded_file.getbuffer())
-            
-            timezone = pytz.timezone("Asia/Kolkata")
-            upload_time = datetime.now(timezone).strftime("%d-%m-%Y %H:%M:%S")
-            save_timestamp(upload_time)
-            save_uploaded_filename(uploaded_file.name)
+            st.sidebar.success(f"File uploaded successfully!")
+    
+    # Admin can edit any point of data and approve visibility
+    df = pd.read_excel("Master-Stock Sheet Original.xlsx")
+    st.write("Admin can view and edit data here")
 
-            st.sidebar.success(f"✅ File uploaded at {upload_time}")
-            push_to_github(UPLOAD_PATH, "Master-Stock Sheet Original.xlsx", commit_message=f"Uploaded {uploaded_file.name}")
-            push_to_github(TIMESTAMP_PATH, "timestamp.txt", commit_message="Updated timestamp")
-
-    if os.path.exists(UPLOAD_PATH):
-        with open(UPLOAD_PATH, "rb") as f:
-            st.sidebar.download_button(
-                label="⬇️ Download Uploaded Excel File",
-                data=f,
-                file_name=load_uploaded_filename(),
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+def user_dashboard():
+    st.title("User Dashboard")
+    df = pd.read_excel("Master-Stock Sheet Original.xlsx")
+    st.write("Data is available based on your permissions.")
+    # Add filtering, search, etc.
 
 # -------------------------
-# Admin/Editor Role Based Access
+# Login and Roles
 # -------------------------
-if st.session_state.role == "Admin":
-    st.subheader("Admin Dashboard")
-    st.write("You can view and modify all data.")
-elif st.session_state.role == "Editor":
-    st.subheader("Editor Dashboard")
-    st.write("You can view and edit certain columns.")
-
-# -------------------------
-# Load Excel Data
-# -------------------------
-@st.cache_data
-def load_data_from_github():
-    url = f"https://raw.githubusercontent.com/logisticsbiogeneindia-sys/BiogeneIndia/main/{UPLOAD_PATH.replace(' ', '%20')}"
-    r = requests.get(url)
-    return pd.ExcelFile(io.BytesIO(r.content))
-
-if not os.path.exists(UPLOAD_PATH):
-    try:
-        xl = load_data_from_github()
-    except Exception as e:
-        st.error(f"❌ Error loading Excel from GitHub: {e}")
-        st.stop()
+if "logged_in" in st.session_state and st.session_state.logged_in:
+    if st.session_state.role == "admin":
+        admin_panel()
+    else:
+        user_dashboard()
 else:
-    xl = pd.ExcelFile(UPLOAD_PATH)
-
+    action = st.sidebar.radio("Choose Action", ["Login", "Sign Up"])
+    
+    if action == "Login":
+        user_login()
+    elif action == "Sign Up":
+        new_username = st.sidebar.text_input("New Username", "")
+        new_password = st.sidebar.text_input("New Password", type="password")
+        confirm_password = st.sidebar.text_input("Confirm Password", type="password")
+        
+        if st.sidebar.button("Create Account"):
+            if new_password == confirm_password:
+                create_user(new_username, new_password)
+                st.sidebar.success(f"User {new_username} created successfully!")
+            else:
+                st.sidebar.error("Passwords do not match.")
+                
 # -------------------------
-# Allowed Sheets
+# Data Tabs (Local, Outstation, Others)
 # -------------------------
-allowed_sheets = [s for s in xl.sheet_names if s in ["Current Inventory", "Item Wise Current Inventory", "Dispatches"]]
-if not allowed_sheets:
-    st.error("❌ No valid sheets found in file!")
-else:
-    sheet_name = st.selectbox("Select Sheet", allowed_sheets)
+if "logged_in" in st.session_state and st.session_state.logged_in:
+    xl = pd.ExcelFile("Master-Stock Sheet Original.xlsx")
+    allowed_sheets = xl.sheet_names
+    sheet_name = st.selectbox("Select Inventory Sheet", allowed_sheets)
     df = xl.parse(sheet_name)
-    st.dataframe(df)
+    
+    tab1, tab2, tab3, tab4 = st.tabs(["🏠 Local", "🚚 Outstation", "📦 Other", "🔍 Search"])
+    
+    check_col = find_column(df, ["Check", "Location", "Status", "Type", "StockType"])
 
-    # Display data based on user roles
-    if st.session_state.role == "Admin":
-        st.write("You can modify all data.")
-    elif st.session_state.role == "Editor":
-        st.write("You can modify certain columns.")
-
+    if check_col:
+        check_vals = df[check_col].astype(str).str.strip().str.lower()
+        
+        with tab1:
+            st.subheader("🏠 Local Inventory")
+            st.dataframe(df[check_vals == "local"], use_container_width=True)
+        
+        with tab2:
+            st.subheader("🚚 Outstation Inventory")
+            st.dataframe(df[check_vals == "outstation"], use_container_width=True)
+        
+        with tab3:
+            st.subheader("📦 Other Inventory")
+            st.dataframe(df[~check_vals.isin(["local", "outstation"])], use_container_width=True)
+    
+    # Search Tab
+    with tab4:
+        st.subheader("🔍 Search Inventory")
+        search_df = df.copy()
+        search_term = st.text_input("Search term")
+        if search_term:
+            search_result = search_df[search_df.apply(lambda row: row.astype(str).str.contains(search_term, case=False).any(), axis=1)]
+            if not search_result.empty:
+                st.dataframe(search_result)
+            else:
+                st.warning("No matching results found.")
+    
 # -------------------------
 # Footer
 # -------------------------
-st.markdown("""<div class="footer">© 2025 Biogene India | Created By Mohit Sharma</div>""", unsafe_allow_html=True)
+st.markdown("""
+<div class="footer">
+    © 2025 Biogene India | Created By Mohit Sharma
+</div>
+""", unsafe_allow_html=True)
