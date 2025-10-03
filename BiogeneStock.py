@@ -2,12 +2,11 @@ import streamlit as st
 import pandas as pd
 import os
 import re
-from datetime import datetime
-import pytz
-import requests
 import base64
 import io
-import hashlib
+import requests
+from datetime import datetime
+import pytz
 
 # -------------------------
 # Helpers
@@ -29,68 +28,7 @@ def find_column(df: pd.DataFrame, candidates: list) -> str | None:
     return None
 
 # -------------------------
-# Load the user database (Excel file)
-users_df = pd.read_excel("users.xlsx")
-
-# Helper function to hash the password
-def hash_password(password: str) -> str:
-    return hashlib.sha256(password.encode()).hexdigest()
-
-# Authenticate user credentials
-def authenticate(username: str, password: str):
-    user = users_df[users_df['Username'] == username]
-    if not user.empty:
-        stored_password = user.iloc[0]['Password']
-        if stored_password == hash_password(password):
-            return user.iloc[0]['Role']
-    return None
-
-# Admin control to add users (SignUp)
-def signup_form():
-    st.sidebar.header("Admin User Management")
-    new_user_name = st.sidebar.text_input("New Username")
-    new_user_password = st.sidebar.text_input("New Password", type="password")
-    new_user_role = st.sidebar.selectbox("New User Role", ["User", "Editor", "Admin"])
-
-    if st.sidebar.button("Create User"):
-        # Check if the username already exists
-        if new_user_name in users_df['Username'].values:
-            st.sidebar.error("Username already exists!")
-        else:
-            # Add new user to Excel file
-            new_user_data = pd.DataFrame({
-                "Username": [new_user_name],
-                "Password": [hash_password(new_user_password)],
-                "Role": [new_user_role]
-            })
-            users_df = pd.concat([users_df, new_user_data], ignore_index=True)
-            users_df.to_excel("users.xlsx", index=False)
-            st.sidebar.success(f"New user {new_user_name} created with role {new_user_role}")
-
-# Login Form
-def login_form():
-    st.sidebar.header("Login")
-    username = st.sidebar.text_input("Username")
-    password = st.sidebar.text_input("Password", type="password")
-    if st.sidebar.button("Login"):
-        role = authenticate(username, password)
-        if role:
-            st.session_state.role = role
-            st.session_state.username = username
-            st.sidebar.success(f"Welcome {username} ({role})")
-        else:
-            st.sidebar.error("Invalid username or password")
-
-# Check if user is logged in, if not show the login form
-if "role" not in st.session_state:
-    login_form()
-
-# Admin access to sign up new users
-if st.session_state.get("role") == "Admin":
-    signup_form()
-
-# -------------------------
-# Config & Styling
+# Streamlit Configuration
 # -------------------------
 st.set_page_config(page_title="Biogene India - Inventory Viewer", layout="wide")
 st.markdown("""
@@ -104,29 +42,52 @@ body {background-color: #f8f9fa; font-family: "Helvetica Neue", sans-serif;}
 """, unsafe_allow_html=True)
 
 # -------------------------
-# Logo + Title Navbar
+# Load secrets and password
 # -------------------------
-logo_path = "logonew.png"
-if os.path.exists(logo_path):
-    logo_html = f'<img src="data:image/png;base64,{base64.b64encode(open(logo_path,"rb").read()).decode()}" alt="Logo">'
-else:
-    logo_html = ""
-
-st.markdown(f"""
-<div class="navbar">
-    {logo_html}
-    <h1>📦 Biogene India - Inventory Viewer</h1>
-</div>
-""", unsafe_allow_html=True)
+try:
+    GITHUB_TOKEN = st.secrets["GITHUB_TOKEN"]
+    PASSWORD = st.secrets["PASSWORD"]
+except KeyError:
+    st.error("Required secrets are missing. Please check your Streamlit secrets configuration.")
+    st.stop()
 
 # -------------------------
-# Sidebar
+# Admin Login Logic (User Authentication)
 # -------------------------
-st.sidebar.header("⚙️ Settings")
-inventory_type = st.sidebar.selectbox("Choose Inventory Type", ["Current Inventory", "Item Wise Current Inventory"])
-password = st.sidebar.text_input("Enter Password to Upload/Download File", type="password")
-correct_password = st.secrets["PASSWORD"]  # Storing password in Streamlit secrets
+def login_user():
+    # Simple login form
+    st.sidebar.header("🔑 Login")
+    username = st.sidebar.text_input("Username")
+    password = st.sidebar.text_input("Password", type="password")
+    
+    # Define users and their roles
+    users = {
+        "admin": {"password": "adminpassword", "role": "Admin"},
+        "editor": {"password": "editorpassword", "role": "Editor"},
+        "user1": {"password": "user1password", "role": "User"},
+        "user2": {"password": "user2password", "role": "User"},
+        "user3": {"password": "user3password", "role": "User"},
+        "user4": {"password": "user4password", "role": "User"},
+        "user5": {"password": "user5password", "role": "User"}
+    }
 
+    if username in users and password == users[username]["password"]:
+        st.session_state.username = username
+        st.session_state.role = users[username]["role"]
+        st.success(f"Welcome, {username} ({st.session_state.role})!")
+        return True
+    elif username:
+        st.sidebar.error("Invalid username or password.")
+        return False
+    return False
+
+# Only allow users with valid login to access the app
+if not login_user():
+    st.stop()
+
+# -------------------------
+# File Management and GitHub Integration
+# -------------------------
 UPLOAD_PATH = "Master-Stock Sheet Original.xlsx"
 TIMESTAMP_PATH = "timestamp.txt"
 FILENAME_PATH = "uploaded_filename.txt"
@@ -145,38 +106,17 @@ def load_uploaded_filename():
             return f.read().strip()
     return "uploaded_inventory.xlsx"
 
-# -------------------------
-# GitHub Config
-# -------------------------
-OWNER = "logisticsbiogeneindia-sys"
-REPO = "BiogeneIndia"
-BRANCH = "main"
-TOKEN = st.secrets["GITHUB_TOKEN"]
-headers = {"Authorization": f"Bearer {TOKEN}", "Accept": "application/vnd.github+json"}
-
-def check_github_auth():
-    r = requests.get("https://api.github.com/user", headers=headers)
-    if r.status_code == 200:
-        st.sidebar.success(f"🔑 GitHub Auth OK: {r.json().get('login')}")
-    else:
-        st.sidebar.error(f"❌ GitHub Auth failed: {r.status_code}")
-
-check_github_auth()
-
-# -------------------------
-# GitHub Push Function
-# -------------------------
 def push_to_github(local_file, remote_path, commit_message="Update file"):
     try:
         with open(local_file, "rb") as f:
             content = base64.b64encode(f.read()).decode("utf-8")
-        url = f"https://api.github.com/repos/{OWNER}/{REPO}/contents/{remote_path}"
-        r = requests.get(url, headers=headers)
+        url = f"https://api.github.com/repos/logisticsbiogeneindia-sys/BiogeneIndia/contents/{remote_path}"
+        r = requests.get(url, headers={"Authorization": f"Bearer {GITHUB_TOKEN}"})
         sha = r.json().get("sha") if r.status_code == 200 else None
-        payload = {"message": commit_message, "content": content, "branch": BRANCH}
+        payload = {"message": commit_message, "content": content, "branch": "main"}
         if sha:
             payload["sha"] = sha
-        r = requests.put(url, headers=headers, json=payload)
+        r = requests.put(url, headers={"Authorization": f"Bearer {GITHUB_TOKEN}"}, json=payload)
         if r.status_code in [200, 201]:
             st.sidebar.success(f"✅ {os.path.basename(local_file)} pushed to GitHub successfully!")
         else:
@@ -185,28 +125,10 @@ def push_to_github(local_file, remote_path, commit_message="Update file"):
         st.sidebar.error(f"Error pushing file {local_file}: {e}")
 
 # -------------------------
-# GitHub Timestamp
+# Upload Section (Admin and Editor Access)
 # -------------------------
-def get_github_file_timestamp():
-    try:
-        url = f"https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/timestamp.txt"
-        r = requests.get(url)
-        if r.status_code == 200:
-            return r.text.strip()
-        else:
-            return "No GitHub timestamp found."
-    except Exception as e:
-        return f"Error fetching timestamp: {e}"
-
-github_timestamp = get_github_file_timestamp()
-st.markdown(f"🕒 **Last Updated (from GitHub):** {github_timestamp}")
-
-# -------------------------
-# Upload & Download Section
-# -------------------------
-if password == correct_password:
+if st.session_state.role in ["Admin", "Editor"]:
     uploaded_file = st.sidebar.file_uploader("Upload Excel File", type=["xlsx", "xls"])
-
     if uploaded_file is not None:
         with st.spinner("Uploading file..."):
             with open(UPLOAD_PATH, "wb") as f:
@@ -227,28 +149,55 @@ if password == correct_password:
                 label="⬇️ Download Uploaded Excel File",
                 data=f,
                 file_name=load_uploaded_filename(),
-                mime="application/vnd.ms-excel"
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
 # -------------------------
-# Sheet Parsing and Display
+# Admin/Editor Role Based Access
 # -------------------------
-if os.path.exists(UPLOAD_PATH):
-    xl = pd.ExcelFile(UPLOAD_PATH)
-    sheet_names = xl.sheet_names
-    sheet_name = st.selectbox("Select Sheet", sheet_names)
+if st.session_state.role == "Admin":
+    st.subheader("Admin Dashboard")
+    st.write("You can view and modify all data.")
+elif st.session_state.role == "Editor":
+    st.subheader("Editor Dashboard")
+    st.write("You can view and edit certain columns.")
 
+# -------------------------
+# Load Excel Data
+# -------------------------
+@st.cache_data
+def load_data_from_github():
+    url = f"https://raw.githubusercontent.com/logisticsbiogeneindia-sys/BiogeneIndia/main/{UPLOAD_PATH.replace(' ', '%20')}"
+    r = requests.get(url)
+    return pd.ExcelFile(io.BytesIO(r.content))
+
+if not os.path.exists(UPLOAD_PATH):
+    try:
+        xl = load_data_from_github()
+    except Exception as e:
+        st.error(f"❌ Error loading Excel from GitHub: {e}")
+        st.stop()
+else:
+    xl = pd.ExcelFile(UPLOAD_PATH)
+
+# -------------------------
+# Allowed Sheets
+# -------------------------
+allowed_sheets = [s for s in xl.sheet_names if s in ["Current Inventory", "Item Wise Current Inventory", "Dispatches"]]
+if not allowed_sheets:
+    st.error("❌ No valid sheets found in file!")
+else:
+    sheet_name = st.selectbox("Select Sheet", allowed_sheets)
     df = xl.parse(sheet_name)
     st.dataframe(df)
-    
-    # Role-based access control logic
-    if "role" in st.session_state:
-        if st.session_state.role == "Admin":
-            st.write("You are an Admin. You can modify all data.")
-        elif st.session_state.role == "Editor":
-            st.write("You are an Editor. You can edit certain data.")
-        elif st.session_state.role == "User":
-            st.write("You are a User. You can view data only.")
 
+    # Display data based on user roles
+    if st.session_state.role == "Admin":
+        st.write("You can modify all data.")
+    elif st.session_state.role == "Editor":
+        st.write("You can modify certain columns.")
+
+# -------------------------
 # Footer
+# -------------------------
 st.markdown("""<div class="footer">© 2025 Biogene India | Created By Mohit Sharma</div>""", unsafe_allow_html=True)
