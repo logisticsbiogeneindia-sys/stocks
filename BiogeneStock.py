@@ -215,14 +215,13 @@ else:
         st.warning("Please check your inventory sheet.")
 
 # -------------------------
-# Search Tab with free typing + dropdown suggestions
+# Search Tab with typing, dropdown, and selection
 # -------------------------
 with tab4:
     st.subheader("🔍 Search Inventory")
     search_sheet = st.selectbox("Select sheet to search", allowed_sheets, index=0)
     search_df = xl.parse(search_sheet)
     df_filtered = search_df.copy()
-    search_performed = False
 
     # Columns
     item_col = find_column(search_df, ["Item Code", "ItemCode", "SKU", "Product Code"])
@@ -233,7 +232,7 @@ with tab4:
     awb_col = find_column(search_df, ["AWB", "AWB Number", "Tracking Number"])
     date_col = find_column(search_df, ["Date", "Dispatch Date", "Created On", "Order Date"])
 
-    # Helper function for free typing + dropdown
+    # Helper: typed input + dropdown
     def typed_or_selected(df, col_name, label):
         typed = st.text_input(f"Type {label}").strip()
         selected = st.selectbox(f"Or select {label}", options=[""] + sorted(df[col_name].dropna().astype(str).unique()))
@@ -246,26 +245,18 @@ with tab4:
     # --- Current Inventory ---
     if search_sheet == "Current Inventory":
         col1, col2, col3 = st.columns(3)
-        with col1:
-            df_filtered = typed_or_selected(df_filtered, customer_col, "Customer Name")
-        with col2:
-            df_filtered = typed_or_selected(df_filtered, brand_col, "Brand")
-        with col3:
-            df_filtered = typed_or_selected(df_filtered, remarks_col, "Remarks")
+        with col1: df_filtered = typed_or_selected(df_filtered, customer_col, "Customer Name")
+        with col2: df_filtered = typed_or_selected(df_filtered, brand_col, "Brand")
+        with col3: df_filtered = typed_or_selected(df_filtered, remarks_col, "Remarks")
 
-    # --- Item Wise Current Inventory ---
+    # --- Item Wise Inventory ---
     elif search_sheet == "Item Wise Current Inventory":
         col1, col2, col3, col4, col5 = st.columns(5)
-        with col1:
-            df_filtered = typed_or_selected(df_filtered, item_col, "Item Code")
-        with col2:
-            df_filtered = typed_or_selected(df_filtered, customer_col, "Customer Name")
-        with col3:
-            df_filtered = typed_or_selected(df_filtered, brand_col, "Brand")
-        with col4:
-            df_filtered = typed_or_selected(df_filtered, remarks_col, "Remarks")
-        with col5:
-            df_filtered = typed_or_selected(df_filtered, description_col, "Discription")
+        with col1: df_filtered = typed_or_selected(df_filtered, item_col, "Item Code")
+        with col2: df_filtered = typed_or_selected(df_filtered, customer_col, "Customer Name")
+        with col3: df_filtered = typed_or_selected(df_filtered, brand_col, "Brand")
+        with col4: df_filtered = typed_or_selected(df_filtered, remarks_col, "Remarks")
+        with col5: df_filtered = typed_or_selected(df_filtered, description_col, "Discription")
 
     # --- Dispatches ---
     elif search_sheet == "Dispatches":
@@ -276,16 +267,25 @@ with tab4:
                 start, end = date_range
                 df_filtered[date_col] = pd.to_datetime(df_filtered[date_col], errors="coerce")
                 df_filtered = df_filtered[(df_filtered[date_col] >= pd.to_datetime(start)) & (df_filtered[date_col] <= pd.to_datetime(end))]
-        with col2:
-            df_filtered = typed_or_selected(df_filtered, awb_col, "AWB Number")
-        with col3:
-            df_filtered = typed_or_selected(df_filtered, customer_col, "Customer Name")
+        with col2: df_filtered = typed_or_selected(df_filtered, awb_col, "AWB Number")
+        with col3: df_filtered = typed_or_selected(df_filtered, customer_col, "Customer Name")
 
-    # Display results
+    # Display filtered results with selection
     if df_filtered.empty:
         st.warning("No matching records found.")
     else:
-        st.dataframe(df_filtered, use_container_width=True, height=600)
+        st.subheader("Filtered Results")
+        id_col = item_col or df_filtered.columns[0]
+        selected_items = st.multiselect(
+            "Select item(s) from filtered results",
+            options=df_filtered[id_col].astype(str).tolist()
+        )
+        if selected_items:
+            selected_df = df_filtered[df_filtered[id_col].astype(str).isin(selected_items)]
+            st.subheader("Selected Items")
+            st.dataframe(selected_df, use_container_width=True, height=400)
+        else:
+            st.dataframe(df_filtered, use_container_width=True, height=600)
 
 # -------------------------
 # Footer
