@@ -87,8 +87,8 @@ def load_uploaded_filename():
 # GitHub Config
 # -------------------------
 OWNER = "logisticsbiogeneindia-sys"
-REPO = "stocks"
-BRANCH = "main"
+REPO = "BiogeneIndia"
+BRANCH = "stocks"
 TOKEN = st.secrets["GITHUB_TOKEN"]
 headers = {"Authorization": f"Bearer {TOKEN}", "Accept": "application/vnd.github+json"}
 
@@ -192,11 +192,11 @@ else:
 allowed_sheets = [s for s in ["Current Inventory", "Item Wise Current Inventory", "Dispatches"] if s in xl.sheet_names]
 if not allowed_sheets:
     st.error("❌ No valid sheets found in file!")
-else:
-    sheet_name = inventory_type
-    df = xl.parse(sheet_name)
-    st.success(f"✅ **{sheet_name}** Loaded Successfully!")
-    check_col = find_column(df, ["Check", "Location", "Status", "Type", "StockType"])
+
+sheet_name = inventory_type
+df = xl.parse(sheet_name)
+st.success(f"✅ **{sheet_name}** Loaded Successfully!")
+check_col = find_column(df, ["Check", "Location", "Status", "Type", "StockType"])
 
 tab1, tab2, tab3, tab4 = st.tabs(["🏠 Local", "🚚 Outstation", "📦 Other", "🔍 Search"])
 
@@ -221,13 +221,16 @@ else:
         st.warning("Please check your inventory sheet.")
 
 # -------------------------
-# Search Tab with Suggestions
+# Search Tab with live autocomplete filtering
 # -------------------------
 with tab4:
     st.subheader("🔍 Search Inventory")
     search_sheet = st.selectbox("Select sheet to search", allowed_sheets, index=0)
     search_df = xl.parse(search_sheet)
+    df_filtered = search_df.copy()
+    search_performed = False
 
+    # Define columns
     item_col = find_column(search_df, ["Item Code", "ItemCode", "SKU", "Product Code"])
     customer_col = find_column(search_df, ["Customer Name", "CustomerName", "Customer", "CustName"])
     brand_col = find_column(search_df, ["Brand", "BrandName", "Product Brand", "Company"])
@@ -236,70 +239,49 @@ with tab4:
     awb_col = find_column(search_df, ["AWB", "AWB Number", "Tracking Number"])
     date_col = find_column(search_df, ["Date", "Dispatch Date", "Created On", "Order Date"])
 
-    df_filtered = search_df.copy()
-    search_performed = False
-
-    # Item Wise Current Inventory with suggestions
-    if search_sheet == "Item Wise Current Inventory":
-        item_options = sorted(df_filtered[item_col].dropna().astype(str).unique().tolist()) if item_col else []
-        customer_options = sorted(df_filtered[customer_col].dropna().astype(str).unique().tolist()) if customer_col else []
-        brand_options = sorted(df_filtered[brand_col].dropna().astype(str).unique().tolist()) if brand_col else []
-        remarks_options = sorted(df_filtered[remarks_col].dropna().astype(str).unique().tolist()) if remarks_col else []
-        description_options = sorted(df_filtered[description_col].dropna().astype(str).unique().tolist()) if description_col else []
-
-        col1, col2, col3, col4, col5 = st.columns(5)
-        with col1:
-            search_item = st.text_input("🔍 Search by Item Code").strip()
-            if search_item:
-                suggestions = [x for x in item_options if search_item.lower() in x.lower()][:10]
-                if suggestions:
-                    st.caption("Suggestions: " + ", ".join(suggestions))
-        with col2:
-            search_customer = st.text_input("👤 Search by Customer Name").strip()
-            if search_customer:
-                suggestions = [x for x in customer_options if search_customer.lower() in x.lower()][:10]
-                if suggestions:
-                    st.caption("Suggestions: " + ", ".join(suggestions))
-        with col3:
-            search_brand = st.text_input("🏷️ Search by Brand").strip()
-            if search_brand:
-                suggestions = [x for x in brand_options if search_brand.lower() in x.lower()][:10]
-                if suggestions:
-                    st.caption("Suggestions: " + ", ".join(suggestions))
-        with col4:
-            search_remarks = st.text_input("📝 Search by Remarks").strip()
-            if search_remarks:
-                suggestions = [x for x in remarks_options if search_remarks.lower() in x.lower()][:10]
-                if suggestions:
-                    st.caption("Suggestions: " + ", ".join(suggestions))
-        with col5:
-            search_description = st.text_input("📄 Search by Description").strip()
-            if search_description:
-                suggestions = [x for x in description_options if search_description.lower() in x.lower()][:10]
-                if suggestions:
-                    st.caption("Suggestions: " + ", ".join(suggestions))
-
-        if search_item and item_col:
-            search_performed = True
-            df_filtered = df_filtered[df_filtered[item_col].astype(str).str.contains(search_item, case=False, na=False)]
-        if search_customer and customer_col:
-            search_performed = True
-            df_filtered = df_filtered[df_filtered[customer_col].astype(str).str.contains(search_customer, case=False, na=False)]
-        if search_brand and brand_col:
-            search_performed = True
-            df_filtered = df_filtered[df_filtered[brand_col].astype(str).str.contains(search_brand, case=False, na=False)]
-        if search_remarks and remarks_col:
-            search_performed = True
-            df_filtered = df_filtered[df_filtered[remarks_col].astype(str).str.contains(search_remarks, case=False, na=False)]
-        if search_description and description_col:
-            search_performed = True
-            df_filtered = df_filtered[df_filtered[description_col].astype(str).str.contains(search_description, case=False, na=False)]
+    # Collect search inputs for all sheets
+    col1, col2, col3, col4, col5 = st.columns(5)
+    
+    search_item = st.text_input("🔍 Search by Item Code").strip()
+    search_customer = st.text_input("👤 Search by Customer Name").strip()
+    search_brand = st.text_input("🏷️ Search by Brand").strip()
+    search_remarks = st.text_input("📝 Search by Remarks").strip()
+    search_description = st.text_input("📄 Search by Description").strip()
+    search_awb = st.text_input("🚚 Search by AWB Number").strip()
+    date_range = st.date_input("Select Date Range", [])
+    
+    # Live filtering
+    if search_item and item_col:
+        df_filtered = df_filtered[df_filtered[item_col].astype(str).str.contains(search_item, case=False, na=False)]
+        search_performed = True
+    if search_customer and customer_col:
+        df_filtered = df_filtered[df_filtered[customer_col].astype(str).str.contains(search_customer, case=False, na=False)]
+        search_performed = True
+    if search_brand and brand_col:
+        df_filtered = df_filtered[df_filtered[brand_col].astype(str).str.contains(search_brand, case=False, na=False)]
+        search_performed = True
+    if search_remarks and remarks_col:
+        df_filtered = df_filtered[df_filtered[remarks_col].astype(str).str.contains(search_remarks, case=False, na=False)]
+        search_performed = True
+    if search_description and description_col:
+        df_filtered = df_filtered[df_filtered[description_col].astype(str).str.contains(search_description, case=False, na=False)]
+        search_performed = True
+    if search_awb and awb_col:
+        df_filtered = df_filtered[df_filtered[awb_col].astype(str).str.contains(search_awb, case=False, na=False)]
+        search_performed = True
+    if date_range and len(date_range) == 2 and date_col:
+        start, end = date_range
+        df_filtered[date_col] = pd.to_datetime(df_filtered[date_col], errors="coerce")
+        df_filtered = df_filtered[(df_filtered[date_col] >= pd.to_datetime(start)) & (df_filtered[date_col] <= pd.to_datetime(end))]
+        search_performed = True
 
     if search_performed:
         if df_filtered.empty:
             st.warning("No matching records found.")
         else:
             st.dataframe(df_filtered, use_container_width=True, height=600)
+    else:
+        st.info("Start typing in any field to filter the table live.")
 
 # -------------------------
 # Footer
@@ -309,4 +291,3 @@ st.markdown("""
     © 2025 Biogene India | Created By Mohit Sharma
 </div>
 """, unsafe_allow_html=True)
-
