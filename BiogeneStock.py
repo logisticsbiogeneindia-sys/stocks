@@ -42,7 +42,7 @@ body {background-color: #f8f9fa; font-family: "Helvetica Neue", sans-serif;}
 """, unsafe_allow_html=True)
 
 # -------------------------
-# Logo + Title Navbar
+# Logo + Navbar
 # -------------------------
 logo_path = "logonew.png"
 if os.path.exists(logo_path):
@@ -101,9 +101,6 @@ def check_github_auth():
 
 check_github_auth()
 
-# -------------------------
-# GitHub Push Function
-# -------------------------
 def push_to_github(local_file, remote_path, commit_message="Update file"):
     try:
         with open(local_file, "rb") as f:
@@ -122,9 +119,6 @@ def push_to_github(local_file, remote_path, commit_message="Update file"):
     except Exception as e:
         st.sidebar.error(f"Error pushing file {local_file}: {e}")
 
-# -------------------------
-# GitHub Timestamp
-# -------------------------
 def get_github_file_timestamp():
     try:
         url = f"https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/timestamp.txt"
@@ -140,7 +134,7 @@ github_timestamp = get_github_file_timestamp()
 st.markdown(f"🕒 **Last Updated (from GitHub):** {github_timestamp}")
 
 # -------------------------
-# Upload & Download Section
+# Upload & Download
 # -------------------------
 if password == correct_password:
     uploaded_file = st.sidebar.file_uploader("Upload Excel File", type=["xlsx", "xls"])
@@ -221,7 +215,7 @@ else:
         st.warning("Please check your inventory sheet.")
 
 # -------------------------
-# Search Tab with live filtering + dropdown suggestions
+# Search Tab with free typing + dropdown suggestions
 # -------------------------
 with tab4:
     st.subheader("🔍 Search Inventory")
@@ -239,124 +233,59 @@ with tab4:
     awb_col = find_column(search_df, ["AWB", "AWB Number", "Tracking Number"])
     date_col = find_column(search_df, ["Date", "Dispatch Date", "Created On", "Order Date"])
 
-    # -------------------------
-    # Current Inventory Sheet
-    # -------------------------
+    # Helper function for free typing + dropdown
+    def typed_or_selected(df, col_name, label):
+        typed = st.text_input(f"Type {label}").strip()
+        selected = st.selectbox(f"Or select {label}", options=[""] + sorted(df[col_name].dropna().astype(str).unique()))
+        if typed:
+            return df[df[col_name].astype(str).str.contains(typed, case=False, na=False)]
+        elif selected:
+            return df[df[col_name].astype(str).str.contains(selected, case=False, na=False)]
+        return df
+
+    # --- Current Inventory ---
     if search_sheet == "Current Inventory":
         col1, col2, col3 = st.columns(3)
         with col1:
-            search_customer = st.selectbox(
-                "Search by Customer Name",
-                options=[""] + sorted(search_df[customer_col].dropna().astype(str).unique())
-            )
+            df_filtered = typed_or_selected(df_filtered, customer_col, "Customer Name")
         with col2:
-            search_brand = st.selectbox(
-                "Search by Brand",
-                options=[""] + sorted(search_df[brand_col].dropna().astype(str).unique())
-            )
+            df_filtered = typed_or_selected(df_filtered, brand_col, "Brand")
         with col3:
-            search_remarks = st.selectbox(
-                "Search by Remarks",
-                options=[""] + sorted(search_df[remarks_col].dropna().astype(str).unique())
-            )
+            df_filtered = typed_or_selected(df_filtered, remarks_col, "Remarks")
 
-        if search_customer:
-            df_filtered = df_filtered[df_filtered[customer_col].astype(str).str.contains(search_customer, case=False, na=False)]
-            search_performed = True
-        if search_brand:
-            df_filtered = df_filtered[df_filtered[brand_col].astype(str).str.contains(search_brand, case=False, na=False)]
-            search_performed = True
-        if search_remarks:
-            df_filtered = df_filtered[df_filtered[remarks_col].astype(str).str.contains(search_remarks, case=False, na=False)]
-            search_performed = True
-
-    # -------------------------
-    # Item Wise Current Inventory Sheet
-    # -------------------------
+    # --- Item Wise Current Inventory ---
     elif search_sheet == "Item Wise Current Inventory":
         col1, col2, col3, col4, col5 = st.columns(5)
         with col1:
-            search_item = st.selectbox(
-                "Search by Item Code",
-                options=[""] + sorted(search_df[item_col].dropna().astype(str).unique())
-            )
+            df_filtered = typed_or_selected(df_filtered, item_col, "Item Code")
         with col2:
-            search_customer = st.selectbox(
-                "Search by Customer Name",
-                options=[""] + sorted(search_df[customer_col].dropna().astype(str).unique())
-            )
+            df_filtered = typed_or_selected(df_filtered, customer_col, "Customer Name")
         with col3:
-            search_brand = st.selectbox(
-                "Search by Brand",
-                options=[""] + sorted(search_df[brand_col].dropna().astype(str).unique())
-            )
+            df_filtered = typed_or_selected(df_filtered, brand_col, "Brand")
         with col4:
-            search_remarks = st.selectbox(
-                "Search by Remarks",
-                options=[""] + sorted(search_df[remarks_col].dropna().astype(str).unique())
-            )
+            df_filtered = typed_or_selected(df_filtered, remarks_col, "Remarks")
         with col5:
-            search_description = st.selectbox(
-                "Search by Discription",
-                options=[""] + sorted(search_df[description_col].dropna().astype(str).unique())
-            )
+            df_filtered = typed_or_selected(df_filtered, description_col, "Discription")
 
-        if search_item:
-            df_filtered = df_filtered[df_filtered[item_col].astype(str).str.contains(search_item, case=False, na=False)]
-            search_performed = True
-        if search_customer:
-            df_filtered = df_filtered[df_filtered[customer_col].astype(str).str.contains(search_customer, case=False, na=False)]
-            search_performed = True
-        if search_brand:
-            df_filtered = df_filtered[df_filtered[brand_col].astype(str).str.contains(search_brand, case=False, na=False)]
-            search_performed = True
-        if search_remarks:
-            df_filtered = df_filtered[df_filtered[remarks_col].astype(str).str.contains(search_remarks, case=False, na=False)]
-            search_performed = True
-        if search_description:
-            df_filtered = df_filtered[df_filtered[description_col].astype(str).str.contains(search_description, case=False, na=False)]
-            search_performed = True
-
-    # -------------------------
-    # Dispatches Sheet
-    # -------------------------
+    # --- Dispatches ---
     elif search_sheet == "Dispatches":
         col1, col2, col3 = st.columns(3)
         with col1:
             date_range = st.date_input("Select Date Range", [])
+            if date_col and date_range and len(date_range) == 2:
+                start, end = date_range
+                df_filtered[date_col] = pd.to_datetime(df_filtered[date_col], errors="coerce")
+                df_filtered = df_filtered[(df_filtered[date_col] >= pd.to_datetime(start)) & (df_filtered[date_col] <= pd.to_datetime(end))]
         with col2:
-            search_awb = st.selectbox(
-                "Search by AWB Number",
-                options=[""] + sorted(search_df[awb_col].dropna().astype(str).unique())
-            )
+            df_filtered = typed_or_selected(df_filtered, awb_col, "AWB Number")
         with col3:
-            search_customer = st.selectbox(
-                "Search by Customer Name",
-                options=[""] + sorted(search_df[customer_col].dropna().astype(str).unique())
-            )
+            df_filtered = typed_or_selected(df_filtered, customer_col, "Customer Name")
 
-        if date_range and len(date_range) == 2 and date_col:
-            start, end = date_range
-            df_filtered[date_col] = pd.to_datetime(df_filtered[date_col], errors="coerce")
-            df_filtered = df_filtered[(df_filtered[date_col] >= pd.to_datetime(start)) & (df_filtered[date_col] <= pd.to_datetime(end))]
-            search_performed = True
-        if search_awb:
-            df_filtered = df_filtered[df_filtered[awb_col].astype(str).str.contains(search_awb, case=False, na=False)]
-            search_performed = True
-        if search_customer:
-            df_filtered = df_filtered[df_filtered[customer_col].astype(str).str.contains(search_customer, case=False, na=False)]
-            search_performed = True
-
-    # -------------------------
-    # Display Filtered Results
-    # -------------------------
-    if search_performed:
-        if df_filtered.empty:
-            st.warning("No matching records found.")
-        else:
-            st.dataframe(df_filtered, use_container_width=True, height=600)
+    # Display results
+    if df_filtered.empty:
+        st.warning("No matching records found.")
     else:
-        st.info("Start selecting values from dropdowns to filter the table.")
+        st.dataframe(df_filtered, use_container_width=True, height=600)
 
 # -------------------------
 # Footer
