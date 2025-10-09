@@ -87,7 +87,7 @@ def load_uploaded_filename():
 # GitHub Config
 # -------------------------
 OWNER = "logisticsbiogeneindia-sys"
-REPO = "BiogeneIndia"
+REPO = "stocks"
 BRANCH = "main"
 TOKEN = st.secrets["GITHUB_TOKEN"]
 headers = {"Authorization": f"Bearer {TOKEN}", "Accept": "application/vnd.github+json"}
@@ -309,3 +309,4 @@ st.markdown("""
     © 2025 Biogene India | Created By Mohit Sharma
 </div>
 """, unsafe_allow_html=True)
+
