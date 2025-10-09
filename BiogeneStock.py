@@ -87,8 +87,8 @@ def load_uploaded_filename():
 # GitHub Config
 # -------------------------
 OWNER = "logisticsbiogeneindia-sys"
-REPO = "BiogeneIndia"
-BRANCH = "stocks"
+REPO = "stocks"
+BRANCH = "main"
 TOKEN = st.secrets["GITHUB_TOKEN"]
 headers = {"Authorization": f"Bearer {TOKEN}", "Accept": "application/vnd.github+json"}
 
@@ -230,7 +230,7 @@ with tab4:
     df_filtered = search_df.copy()
     search_performed = False
 
-    # Define columns
+    # Columns
     item_col = find_column(search_df, ["Item Code", "ItemCode", "SKU", "Product Code"])
     customer_col = find_column(search_df, ["Customer Name", "CustomerName", "Customer", "CustName"])
     brand_col = find_column(search_df, ["Brand", "BrandName", "Product Brand", "Company"])
@@ -239,17 +239,31 @@ with tab4:
     awb_col = find_column(search_df, ["AWB", "AWB Number", "Tracking Number"])
     date_col = find_column(search_df, ["Date", "Dispatch Date", "Created On", "Order Date"])
 
-    # Collect search inputs for all sheets
+    # Create columns for input
     col1, col2, col3, col4, col5 = st.columns(5)
     
-    search_item = st.text_input("🔍 Search by Item Code").strip()
-    search_customer = st.text_input("👤 Search by Customer Name").strip()
-    search_brand = st.text_input("🏷️ Search by Brand").strip()
-    search_remarks = st.text_input("📝 Search by Remarks").strip()
-    search_description = st.text_input("📄 Search by Description").strip()
-    search_awb = st.text_input("🚚 Search by AWB Number").strip()
-    date_range = st.date_input("Select Date Range", [])
-    
+    with col1:
+        search_item = st.text_input("🔍 Search by Item Code").strip()
+    with col2:
+        search_customer = st.text_input("👤 Search by Customer Name").strip()
+    with col3:
+        search_brand = st.text_input("🏷️ Search by Brand").strip()
+    with col4:
+        search_remarks = st.text_input("📝 Search by Remarks").strip()
+    with col5:
+        search_description = st.text_input("📄 Search by Description").strip()
+
+    # Extra for Dispatches
+    if search_sheet == "Dispatches":
+        col6, col7 = st.columns(2)
+        with col6:
+            date_range = st.date_input("Select Date Range", [])
+        with col7:
+            search_awb = st.text_input("🚚 Search by AWB Number").strip()
+    else:
+        date_range = []
+        search_awb = ""
+
     # Live filtering
     if search_item and item_col:
         df_filtered = df_filtered[df_filtered[item_col].astype(str).str.contains(search_item, case=False, na=False)]
@@ -275,6 +289,7 @@ with tab4:
         df_filtered = df_filtered[(df_filtered[date_col] >= pd.to_datetime(start)) & (df_filtered[date_col] <= pd.to_datetime(end))]
         search_performed = True
 
+    # Display filtered table
     if search_performed:
         if df_filtered.empty:
             st.warning("No matching records found.")
