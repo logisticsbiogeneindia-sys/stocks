@@ -4,9 +4,9 @@ import os
 import re
 from datetime import datetime
 import pytz
+import requests
 import base64
 import io
-import gdown  # pip install gdown
 
 # -------------------------
 # Helpers
@@ -84,11 +84,60 @@ def load_uploaded_filename():
     return "uploaded_inventory.xlsx"
 
 # -------------------------
-# Google Drive Config
+# GitHub Config
 # -------------------------
-# Ye link aapko Google Drive file ka "shareable link" se milega
-# Example: 'https://drive.google.com/uc?id=FILE_ID'
-GDRIVE_FILE_URL = st.secrets.get("GDRIVE_FILE_URL")  # store in Streamlit secrets
+OWNER = "logisticsbiogeneindia-sys"
+REPO = "BiogeneIndia"
+BRANCH = "main"
+TOKEN = st.secrets["GITHUB_TOKEN"]
+headers = {"Authorization": f"Bearer {TOKEN}", "Accept": "application/vnd.github+json"}
+
+def check_github_auth():
+    r = requests.get("https://api.github.com/user", headers=headers)
+    if r.status_code == 200:
+        st.sidebar.success(f"🔑 GitHub Auth OK: {r.json().get('login')}")
+    else:
+        st.sidebar.error(f"❌ GitHub Auth failed: {r.status_code}")
+
+check_github_auth()
+
+# -------------------------
+# GitHub Push Function
+# -------------------------
+def push_to_github(local_file, remote_path, commit_message="Update file"):
+    try:
+        with open(local_file, "rb") as f:
+            content = base64.b64encode(f.read()).decode("utf-8")
+        url = f"https://api.github.com/repos/{OWNER}/{REPO}/contents/{remote_path}"
+        r = requests.get(url, headers=headers)
+        sha = r.json().get("sha") if r.status_code == 200 else None
+        payload = {"message": commit_message, "content": content, "branch": BRANCH}
+        if sha:
+            payload["sha"] = sha
+        r = requests.put(url, headers=headers, json=payload)
+        if r.status_code in [200, 201]:
+            st.sidebar.success(f"✅ {os.path.basename(local_file)} pushed to GitHub successfully!")
+        else:
+            st.sidebar.error(f"❌ GitHub push failed for {local_file}: {r.json()}")
+    except Exception as e:
+        st.sidebar.error(f"Error pushing file {local_file}: {e}")
+
+# -------------------------
+# GitHub Timestamp
+# -------------------------
+def get_github_file_timestamp():
+    try:
+        url = f"https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/timestamp.txt"
+        r = requests.get(url)
+        if r.status_code == 200:
+            return r.text.strip()
+        else:
+            return "No GitHub timestamp found."
+    except Exception as e:
+        return f"Error fetching timestamp: {e}"
+
+github_timestamp = get_github_file_timestamp()
+st.markdown(f"🕒 **Last Updated (from GitHub):** {github_timestamp}")
 
 # -------------------------
 # Upload & Download Section
@@ -107,6 +156,8 @@ if password == correct_password:
             save_uploaded_filename(uploaded_file.name)
 
             st.sidebar.success(f"✅ File uploaded at {upload_time}")
+            push_to_github(UPLOAD_PATH, "Master-Stock Sheet Original.xlsx", commit_message=f"Uploaded {uploaded_file.name}")
+            push_to_github(TIMESTAMP_PATH, "timestamp.txt", commit_message="Updated timestamp")
 
     if os.path.exists(UPLOAD_PATH):
         with open(UPLOAD_PATH, "rb") as f:
@@ -124,17 +175,19 @@ else:
 # Load Excel
 # -------------------------
 @st.cache_data
-def load_data():
-    # Agar local file exist karti hai use load karo
-    if os.path.exists(UPLOAD_PATH):
-        return pd.ExcelFile(UPLOAD_PATH)
-    # Nahi to Google Drive se download karo
-    else:
-        output = UPLOAD_PATH
-        gdown.download(GDRIVE_FILE_URL, output, quiet=False)
-        return pd.ExcelFile(output)
+def load_data_from_github():
+    url = f"https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/{UPLOAD_PATH.replace(' ', '%20')}"
+    r = requests.get(url)
+    return pd.ExcelFile(io.BytesIO(r.content))
 
-xl = load_data()
+if not os.path.exists(UPLOAD_PATH):
+    try:
+        xl = load_data_from_github()
+    except Exception as e:
+        st.error(f"❌ Error loading Excel from GitHub: {e}")
+        st.stop()
+else:
+    xl = pd.ExcelFile(UPLOAD_PATH)
 
 # -------------------------
 # Allowed sheets
