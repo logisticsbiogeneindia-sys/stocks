@@ -4,9 +4,9 @@ import os
 import re
 from datetime import datetime
 import pytz
-import requests
 import base64
 import io
+import gdown  # pip install gdown
 
 # -------------------------
 # Helpers
@@ -42,7 +42,7 @@ body {background-color: #f8f9fa; font-family: "Helvetica Neue", sans-serif;}
 """, unsafe_allow_html=True)
 
 # -------------------------
-# Logo + Navbar
+# Logo + Title Navbar
 # -------------------------
 logo_path = "logonew.png"
 if os.path.exists(logo_path):
@@ -84,71 +84,29 @@ def load_uploaded_filename():
     return "uploaded_inventory.xlsx"
 
 # -------------------------
-# GitHub Config
+# Google Drive Config
 # -------------------------
-OWNER = "logisticsbiogeneindia-sys"
-REPO = "stocks"
-BRANCH = "main"
-TOKEN = st.secrets["GITHUB_TOKEN"]
-headers = {"Authorization": f"Bearer {TOKEN}", "Accept": "application/vnd.github+json"}
-
-def check_github_auth():
-    r = requests.get("https://api.github.com/user", headers=headers)
-    if r.status_code == 200:
-        st.sidebar.success(f"🔑 GitHub Auth OK: {r.json().get('login')}")
-    else:
-        st.sidebar.error(f"❌ GitHub Auth failed: {r.status_code}")
-
-check_github_auth()
-
-def push_to_github(local_file, remote_path, commit_message="Update file"):
-    try:
-        with open(local_file, "rb") as f:
-            content = base64.b64encode(f.read()).decode("utf-8")
-        url = f"https://api.github.com/repos/{OWNER}/{REPO}/contents/{remote_path}"
-        r = requests.get(url, headers=headers)
-        sha = r.json().get("sha") if r.status_code == 200 else None
-        payload = {"message": commit_message, "content": content, "branch": BRANCH}
-        if sha:
-            payload["sha"] = sha
-        r = requests.put(url, headers=headers, json=payload)
-        if r.status_code in [200, 201]:
-            st.sidebar.success(f"✅ {os.path.basename(local_file)} pushed to GitHub successfully!")
-        else:
-            st.sidebar.error(f"❌ GitHub push failed for {local_file}: {r.json()}")
-    except Exception as e:
-        st.sidebar.error(f"Error pushing file {local_file}: {e}")
-
-def get_github_file_timestamp():
-    try:
-        url = f"https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/timestamp.txt"
-        r = requests.get(url)
-        if r.status_code == 200:
-            return r.text.strip()
-        else:
-            return "No GitHub timestamp found."
-    except Exception as e:
-        return f"Error fetching timestamp: {e}"
-
-github_timestamp = get_github_file_timestamp()
-st.markdown(f"🕒 **Last Updated (from GitHub):** {github_timestamp}")
+# Ye link aapko Google Drive file ka "shareable link" se milega
+# Example: 'https://drive.google.com/uc?id=FILE_ID'
+GDRIVE_FILE_URL = st.secrets.get("GDRIVE_FILE_URL")  # store in Streamlit secrets
 
 # -------------------------
-# Upload & Download
+# Upload & Download Section
 # -------------------------
 if password == correct_password:
     uploaded_file = st.sidebar.file_uploader("Upload Excel File", type=["xlsx", "xls"])
+
     if uploaded_file is not None:
         with st.spinner("Uploading file..."):
             with open(UPLOAD_PATH, "wb") as f:
                 f.write(uploaded_file.getbuffer())
+
             timezone = pytz.timezone("Asia/Kolkata")
             upload_time = datetime.now(timezone).strftime("%d-%m-%Y %H:%M:%S")
             save_timestamp(upload_time)
             save_uploaded_filename(uploaded_file.name)
+
             st.sidebar.success(f"✅ File uploaded at {upload_time}")
-            push_to_github(UPLOAD_PATH, "Master-Stock Sheet Original.xlsx", commit_message=f"Uploaded {uploaded_file.name}")
-            push_to_github(TIMESTAMP_PATH, "timestamp.txt", commit_message="Updated timestamp")
 
     if os.path.exists(UPLOAD_PATH):
         with open(UPLOAD_PATH, "rb") as f:
@@ -166,19 +124,17 @@ else:
 # Load Excel
 # -------------------------
 @st.cache_data
-def load_data_from_github():
-    url = f"https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/{UPLOAD_PATH.replace(' ', '%20')}"
-    r = requests.get(url)
-    return pd.ExcelFile(io.BytesIO(r.content))
+def load_data():
+    # Agar local file exist karti hai use load karo
+    if os.path.exists(UPLOAD_PATH):
+        return pd.ExcelFile(UPLOAD_PATH)
+    # Nahi to Google Drive se download karo
+    else:
+        output = UPLOAD_PATH
+        gdown.download(GDRIVE_FILE_URL, output, quiet=False)
+        return pd.ExcelFile(output)
 
-if not os.path.exists(UPLOAD_PATH):
-    try:
-        xl = load_data_from_github()
-    except Exception as e:
-        st.error(f"❌ Error loading Excel from GitHub: {e}")
-        st.stop()
-else:
-    xl = pd.ExcelFile(UPLOAD_PATH)
+xl = load_data()
 
 # -------------------------
 # Allowed sheets
@@ -186,17 +142,14 @@ else:
 allowed_sheets = [s for s in ["Current Inventory", "Item Wise Current Inventory", "Dispatches"] if s in xl.sheet_names]
 if not allowed_sheets:
     st.error("❌ No valid sheets found in file!")
-
-sheet_name = inventory_type
-df = xl.parse(sheet_name)
-st.success(f"✅ **{sheet_name}** Loaded Successfully!")
-check_col = find_column(df, ["Check", "Location", "Status", "Type", "StockType"])
+else:
+    sheet_name = inventory_type
+    df = xl.parse(sheet_name)
+    st.success(f"✅ **{sheet_name}** Loaded Successfully!")
+    check_col = find_column(df, ["Check", "Location", "Status", "Type", "StockType"])
 
 tab1, tab2, tab3, tab4 = st.tabs(["🏠 Local", "🚚 Outstation", "📦 Other", "🔍 Search"])
 
-# -------------------------
-# Inventory Tabs
-# -------------------------
 if check_col and sheet_name != "Dispatches":
     check_vals = df[check_col].astype(str).str.strip().str.lower()
     with tab1:
@@ -210,80 +163,107 @@ if check_col and sheet_name != "Dispatches":
         st.dataframe(df[~check_vals.isin(["local", "outstation"])], use_container_width=True, height=600)
 else:
     with tab1:
-        st.warning("No 'Check' column found.")
+        st.subheader("📄 No Inventory Data")
+        st.warning("There is no 'Check' column found in the data.")
     with tab2:
-        st.warning("Please check your inventory sheet.")
+        st.subheader("📄 No Dispatch Data")
+        st.warning("Please check your inventory for errors or missing columns.")
 
 # -------------------------
-# Search Tab with typing, dropdown, and selection
+# Search Tab
 # -------------------------
 with tab4:
     st.subheader("🔍 Search Inventory")
     search_sheet = st.selectbox("Select sheet to search", allowed_sheets, index=0)
     search_df = xl.parse(search_sheet)
-    df_filtered = search_df.copy()
 
     # Columns
     item_col = find_column(search_df, ["Item Code", "ItemCode", "SKU", "Product Code"])
     customer_col = find_column(search_df, ["Customer Name", "CustomerName", "Customer", "CustName"])
     brand_col = find_column(search_df, ["Brand", "BrandName", "Product Brand", "Company"])
     remarks_col = find_column(search_df, ["Remarks", "Remark", "Notes", "Comments"])
-    description_col = find_column(search_df, ["Discription", "Item Discriptin", "ItemDiscription", "Disc"])
     awb_col = find_column(search_df, ["AWB", "AWB Number", "Tracking Number"])
     date_col = find_column(search_df, ["Date", "Dispatch Date", "Created On", "Order Date"])
+    description_col = find_column(search_df, ["Description", "Discription", "Item Description", "ItemDiscription", "Disc"])
 
-    # Helper: typed input + dropdown
-    def typed_or_selected(df, col_name, label):
-        typed = st.text_input(f"Type {label}").strip()
-        selected = st.selectbox(f"Or select {label}", options=[""] + sorted(df[col_name].dropna().astype(str).unique()))
-        if typed:
-            return df[df[col_name].astype(str).str.contains(typed, case=False, na=False)]
-        elif selected:
-            return df[df[col_name].astype(str).str.contains(selected, case=False, na=False)]
-        return df
+    df_filtered = search_df.copy()
+    search_performed = False
 
-    # --- Current Inventory ---
     if search_sheet == "Current Inventory":
         col1, col2, col3 = st.columns(3)
-        with col1: df_filtered = typed_or_selected(df_filtered, customer_col, "Customer Name")
-        with col2: df_filtered = typed_or_selected(df_filtered, brand_col, "Brand")
-        with col3: df_filtered = typed_or_selected(df_filtered, remarks_col, "Remarks")
+        with col1:
+            search_customer = st.text_input("Search by Customer Name").strip()
+        with col2:
+            search_brand = st.text_input("Search by Brand").strip()
+        with col3:
+            search_remarks = st.text_input("Search by Remarks").strip()
 
-    # --- Item Wise Inventory ---
+        if search_customer and customer_col:
+            search_performed = True
+            df_filtered = df_filtered[df_filtered[customer_col].astype(str).str.contains(search_customer, case=False, na=False)]
+        if search_brand and brand_col:
+            search_performed = True
+            df_filtered = df_filtered[df_filtered[brand_col].astype(str).str.contains(search_brand, case=False, na=False)]
+        if search_remarks and remarks_col:
+            search_performed = True
+            df_filtered = df_filtered[df_filtered[remarks_col].astype(str).str.contains(search_remarks, case=False, na=False)]
+
     elif search_sheet == "Item Wise Current Inventory":
         col1, col2, col3, col4, col5 = st.columns(5)
-        with col1: df_filtered = typed_or_selected(df_filtered, item_col, "Item Code")
-        with col2: df_filtered = typed_or_selected(df_filtered, customer_col, "Customer Name")
-        with col3: df_filtered = typed_or_selected(df_filtered, brand_col, "Brand")
-        with col4: df_filtered = typed_or_selected(df_filtered, remarks_col, "Remarks")
-        with col5: df_filtered = typed_or_selected(df_filtered, description_col, "Discription")
+        with col1:
+            search_item = st.text_input("Search by Item Code").strip()
+        with col2:
+            search_customer = st.text_input("Search by Customer Name").strip()
+        with col3:
+            search_brand = st.text_input("Search by Brand").strip()
+        with col4:
+            search_remarks = st.text_input("Search by Remarks").strip()
+        with col5:
+            search_description = st.text_input("Search by Description").strip()
 
-    # --- Dispatches ---
+        if search_item and item_col:
+            search_performed = True
+            df_filtered = df_filtered[df_filtered[item_col].astype(str).str.contains(search_item, case=False, na=False)]
+        if search_customer and customer_col:
+            search_performed = True
+            df_filtered = df_filtered[df_filtered[customer_col].astype(str).str.contains(search_customer, case=False, na=False)]
+        if search_brand and brand_col:
+            search_performed = True
+            df_filtered = df_filtered[df_filtered[brand_col].astype(str).str.contains(search_brand, case=False, na=False)]
+        if search_remarks and remarks_col:
+            search_performed = True
+            df_filtered = df_filtered[df_filtered[remarks_col].astype(str).str.contains(search_remarks, case=False, na=False)]
+        if search_description and description_col:
+            search_performed = True
+            df_filtered = df_filtered[df_filtered[description_col].astype(str).str.contains(search_description, case=False, na=False)]
+
     elif search_sheet == "Dispatches":
         col1, col2, col3 = st.columns(3)
         with col1:
             date_range = st.date_input("Select Date Range", [])
-            if date_col and date_range and len(date_range) == 2:
-                start, end = date_range
-                df_filtered[date_col] = pd.to_datetime(df_filtered[date_col], errors="coerce")
-                df_filtered = df_filtered[(df_filtered[date_col] >= pd.to_datetime(start)) & (df_filtered[date_col] <= pd.to_datetime(end))]
-        with col2: df_filtered = typed_or_selected(df_filtered, awb_col, "AWB Number")
-        with col3: df_filtered = typed_or_selected(df_filtered, customer_col, "Customer Name")
+        with col2:
+            search_awb = st.text_input("Search by AWB Number").strip()
+        with col3:
+            search_customer = st.text_input("Search by Customer Name").strip()
 
-    # Display filtered results with selection
-    if df_filtered.empty:
-        st.warning("No matching records found.")
-    else:
-        st.subheader("Filtered Results")
-        id_col = item_col or df_filtered.columns[0]
-        selected_items = st.multiselect(
-            "Select item(s) from filtered results",
-            options=df_filtered[id_col].astype(str).tolist()
-        )
-        if selected_items:
-            selected_df = df_filtered[df_filtered[id_col].astype(str).isin(selected_items)]
-            st.subheader("Selected Items")
-            st.dataframe(selected_df, use_container_width=True, height=400)
+        if date_range and len(date_range) == 2 and date_col:
+            start, end = date_range
+            search_performed = True
+            df_filtered[date_col] = pd.to_datetime(df_filtered[date_col], errors="coerce")
+            df_filtered = df_filtered[
+                (df_filtered[date_col] >= pd.to_datetime(start)) &
+                (df_filtered[date_col] <= pd.to_datetime(end))
+            ]
+        if search_awb and awb_col:
+            search_performed = True
+            df_filtered = df_filtered[df_filtered[awb_col].astype(str).str.contains(search_awb, case=False, na=False)]
+        if search_customer and customer_col:
+            search_performed = True
+            df_filtered = df_filtered[df_filtered[customer_col].astype(str).str.contains(search_customer, case=False, na=False)]
+
+    if search_performed:
+        if df_filtered.empty:
+            st.warning("No matching records found.")
         else:
             st.dataframe(df_filtered, use_container_width=True, height=600)
 
