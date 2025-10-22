@@ -88,7 +88,7 @@ def load_uploaded_filename():
 # -------------------------
 OWNER = "logisticsbiogeneindia-sys"
 REPO_1 = "stock"
-REPO_2 = "Biogeneinida"
+REPO_2 = "Biogeneindia"
 BRANCH = "main"
 TOKEN = st.secrets["GITHUB_TOKEN"]
 headers = {"Authorization": f"Bearer {TOKEN}", "Accept": "application/vnd.github+json"}
@@ -268,4 +268,5 @@ st.markdown("""
     © 2025 Stock | Created by Mohit Sharma
 </div>
 """, unsafe_allow_html=True)
+
 
