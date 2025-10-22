@@ -30,7 +30,7 @@ def find_column(df: pd.DataFrame, candidates: list) -> str | None:
 # -------------------------
 # Config & Styling
 # -------------------------
-st.set_page_config(page_title="Biogene India - Inventory Viewer", layout="wide")
+st.set_page_config(page_title="Stock - Inventory Viewer", layout="wide")
 st.markdown("""
 <style>
 body {background-color: #f8f9fa; font-family: "Helvetica Neue", sans-serif;}
@@ -53,7 +53,7 @@ else:
 st.markdown(f"""
 <div class="navbar">
     {logo_html}
-    <h1>📦 Biogene India - Inventory Viewer</h1>
+    <h1>📦 Stock - Inventory Viewer</h1>
 </div>
 """, unsafe_allow_html=True)
 
@@ -62,7 +62,7 @@ st.markdown(f"""
 # -------------------------
 st.sidebar.header("⚙️ Settings")
 inventory_type = st.sidebar.selectbox("Choose Inventory Type", ["Current Inventory", "Item Wise Current Inventory"])
-password = st.sidebar.text_input("Enter Password to Upload/Download File", type="password")
+password = st.sidebar.text_input("Enter Password to Upload/Update File", type="password")
 correct_password = st.secrets["PASSWORD"]
 
 UPLOAD_PATH = "Master-Stock Sheet Original.xlsx"
@@ -87,7 +87,7 @@ def load_uploaded_filename():
 # GitHub Config
 # -------------------------
 OWNER = "logisticsbiogeneindia-sys"
-REPO = "stocks"
+REPO = "stock"
 BRANCH = "main"
 TOKEN = st.secrets["GITHUB_TOKEN"]
 headers = {"Authorization": f"Bearer {TOKEN}", "Accept": "application/vnd.github+json"}
@@ -195,14 +195,21 @@ else:
 allowed_sheets = [s for s in ["Current Inventory", "Item Wise Current Inventory", "Dispatches"] if s in xl.sheet_names]
 if not allowed_sheets:
     st.error("❌ No valid sheets found in file!")
-else:
-    sheet_name = inventory_type
-    df = xl.parse(sheet_name)
-    st.success(f"✅ **{sheet_name}** Loaded Successfully!")
-    check_col = find_column(df, ["Check", "Location", "Status", "Type", "StockType"])
+    st.stop()
 
-tab1, tab2, tab3, tab4 = st.tabs(["🏠 Local", "🚚 Outstation", "📦 Other", "🔍 Search"])
+sheet_name = inventory_type
+df = xl.parse(sheet_name)
+st.success(f"✅ **{sheet_name}** Loaded Successfully!")
+check_col = find_column(df, ["Check", "Location", "Status", "Type", "StockType"])
 
+# -------------------------
+# Tabs
+# -------------------------
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["🏠 Local", "🚚 Outstation", "📦 Other", "🔍 Search", "📝 Update Remarks"])  # 🔧 NEW
+
+# -------------------------
+# Inventory Tabs
+# -------------------------
 if check_col and sheet_name != "Dispatches":
     check_vals = df[check_col].astype(str).str.strip().str.lower()
     with tab1:
@@ -215,12 +222,7 @@ if check_col and sheet_name != "Dispatches":
         st.subheader("📦 Other Inventory")
         st.dataframe(df[~check_vals.isin(["local", "outstation"])], use_container_width=True, height=600)
 else:
-    with tab1:
-        st.subheader("📄 No Inventory Data")
-        st.warning("There is no 'Check' column found in the data.")
-    with tab2:
-        st.subheader("📄 No Dispatch Data")
-        st.warning("Please check your inventory for errors or missing columns.")
+    st.warning("No valid 'Check' column found.")
 
 # -------------------------
 # Search Tab
@@ -230,102 +232,60 @@ with tab4:
     search_sheet = st.selectbox("Select sheet to search", allowed_sheets, index=0)
     search_df = xl.parse(search_sheet)
 
-    # Columns
     item_col = find_column(search_df, ["Item Code", "ItemCode", "SKU", "Product Code"])
     customer_col = find_column(search_df, ["Customer Name", "CustomerName", "Customer", "CustName"])
     brand_col = find_column(search_df, ["Brand", "BrandName", "Product Brand", "Company"])
     remarks_col = find_column(search_df, ["Remarks", "Remark", "Notes", "Comments"])
-    awb_col = find_column(search_df, ["AWB", "AWB Number", "Tracking Number"])
-    date_col = find_column(search_df, ["Date", "Dispatch Date", "Created On", "Order Date"])
     description_col = find_column(search_df, ["Description", "Discription", "Item Description", "ItemDiscription", "Disc"])
 
-    df_filtered = search_df.copy()
-    search_performed = False
-
-    if search_sheet == "Current Inventory":
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            search_customer = st.text_input("Search by Customer Name").strip()
-        with col2:
-            search_brand = st.text_input("Search by Brand").strip()
-        with col3:
-            search_remarks = st.text_input("Search by Remarks").strip()
-
-        if search_customer and customer_col:
-            search_performed = True
-            df_filtered = df_filtered[df_filtered[customer_col].astype(str).str.contains(search_customer, case=False, na=False)]
-        if search_brand and brand_col:
-            search_performed = True
-            df_filtered = df_filtered[df_filtered[brand_col].astype(str).str.contains(search_brand, case=False, na=False)]
-        if search_remarks and remarks_col:
-            search_performed = True
-            df_filtered = df_filtered[df_filtered[remarks_col].astype(str).str.contains(search_remarks, case=False, na=False)]
-
-    elif search_sheet == "Item Wise Current Inventory":
-        col1, col2, col3, col4, col5 = st.columns(5)
-        with col1:
-            search_item = st.text_input("Search by Item Code").strip()
-        with col2:
-            search_customer = st.text_input("Search by Customer Name").strip()
-        with col3:
-            search_brand = st.text_input("Search by Brand").strip()
-        with col4:
-            search_remarks = st.text_input("Search by Remarks").strip()
-        with col5:
-            search_description = st.text_input("Search by Description").strip()
-
-        if search_item and item_col:
-            search_performed = True
-            df_filtered = df_filtered[df_filtered[item_col].astype(str).str.contains(search_item, case=False, na=False)]
-        if search_customer and customer_col:
-            search_performed = True
-            df_filtered = df_filtered[df_filtered[customer_col].astype(str).str.contains(search_customer, case=False, na=False)]
-        if search_brand and brand_col:
-            search_performed = True
-            df_filtered = df_filtered[df_filtered[brand_col].astype(str).str.contains(search_brand, case=False, na=False)]
-        if search_remarks and remarks_col:
-            search_performed = True
-            df_filtered = df_filtered[df_filtered[remarks_col].astype(str).str.contains(search_remarks, case=False, na=False)]
-        if search_description and description_col:
-            search_performed = True
-            df_filtered = df_filtered[df_filtered[description_col].astype(str).str.contains(search_description, case=False, na=False)]
-
-    elif search_sheet == "Dispatches":
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            date_range = st.date_input("Select Date Range", [])
-        with col2:
-            search_awb = st.text_input("Search by AWB Number").strip()
-        with col3:
-            search_customer = st.text_input("Search by Customer Name").strip()
-
-        if date_range and len(date_range) == 2 and date_col:
-            start, end = date_range
-            search_performed = True
-            df_filtered[date_col] = pd.to_datetime(df_filtered[date_col], errors="coerce")
-            df_filtered = df_filtered[
-                (df_filtered[date_col] >= pd.to_datetime(start)) &
-                (df_filtered[date_col] <= pd.to_datetime(end))
-            ]
-        if search_awb and awb_col:
-            search_performed = True
-            df_filtered = df_filtered[df_filtered[awb_col].astype(str).str.contains(search_awb, case=False, na=False)]
-        if search_customer and customer_col:
-            search_performed = True
-            df_filtered = df_filtered[df_filtered[customer_col].astype(str).str.contains(search_customer, case=False, na=False)]
-
-    if search_performed:
-        if df_filtered.empty:
-            st.warning("No matching records found.")
-        else:
+    search_term = st.text_input("Enter search term:")
+    if search_term:
+        cols_to_search = [item_col, customer_col, brand_col, remarks_col, description_col]
+        mask = pd.Series(False, index=search_df.index)
+        for c in cols_to_search:
+            if c:
+                mask |= search_df[c].astype(str).str.contains(search_term, case=False, na=False)
+        df_filtered = search_df[mask]
+        if not df_filtered.empty:
             st.dataframe(df_filtered, use_container_width=True, height=600)
+        else:
+            st.warning("No matching results found.")
+
+# -------------------------
+# 🔧 NEW: Update Remarks Tab
+# -------------------------
+with tab5:
+    st.subheader("📝 Update Remarks")
+
+    remarks_col = find_column(df, ["Remarks", "Remark", "Notes", "Comments"])
+    if remarks_col is None:
+        st.error("❌ No 'Remarks' column found in this sheet.")
+    else:
+        editable_df = st.data_editor(df[[remarks_col]], use_container_width=True, height=400, key="edit_remarks")
+        
+        if password != correct_password:
+            st.warning("Enter correct password in sidebar to enable updates.")
+        else:
+            if st.button("🔄 Update Remarks in Excel"):
+                with st.spinner("Updating remarks..."):
+                    df[remarks_col] = editable_df[remarks_col]
+                    with pd.ExcelWriter(UPLOAD_PATH, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
+                        df.to_excel(writer, sheet_name=sheet_name, index=False)
+
+                    timezone = pytz.timezone("Asia/Kolkata")
+                    update_time = datetime.now(timezone).strftime("%d-%m-%Y %H:%M:%S")
+                    save_timestamp(update_time)
+
+                    push_to_github(UPLOAD_PATH, "Master-Stock Sheet Original.xlsx", commit_message="Updated Remarks")
+                    push_to_github(TIMESTAMP_PATH, "timestamp.txt", commit_message="Updated timestamp")
+
+                    st.success("✅ Remarks updated and pushed to GitHub successfully!")
 
 # -------------------------
 # Footer
 # -------------------------
 st.markdown("""
 <div class="footer">
-    © 2025 Biogene India | Created By Mohit Sharma
+    © 2025 Stock | Created by Mohit Sharma
 </div>
 """, unsafe_allow_html=True)
-
