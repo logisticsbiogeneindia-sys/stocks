@@ -42,7 +42,7 @@ body {background-color: #f8f9fa; font-family: "Helvetica Neue", sans-serif;}
 """, unsafe_allow_html=True)
 
 # -------------------------
-# Logo + Title Navbar
+# Navbar
 # -------------------------
 logo_path = "logonew.png"
 if os.path.exists(logo_path):
@@ -84,10 +84,10 @@ def load_uploaded_filename():
     return "uploaded_inventory.xlsx"
 
 # -------------------------
-# GitHub Config
+# GitHub Config (multi-repo)
 # -------------------------
 OWNER = "logisticsbiogeneindia-sys"
-REPO = "stock"
+REPO_1 = "stock"
 BRANCH = "main"
 TOKEN = st.secrets["GITHUB_TOKEN"]
 headers = {"Authorization": f"Bearer {TOKEN}", "Accept": "application/vnd.github+json"}
@@ -102,23 +102,26 @@ def check_github_auth():
 check_github_auth()
 
 # -------------------------
-# GitHub Push Function
+# Push file to both repos
 # -------------------------
 def push_to_github(local_file, remote_path, commit_message="Update file"):
     try:
         with open(local_file, "rb") as f:
             content = base64.b64encode(f.read()).decode("utf-8")
-        url = f"https://api.github.com/repos/{OWNER}/{REPO}/contents/{remote_path}"
-        r = requests.get(url, headers=headers)
-        sha = r.json().get("sha") if r.status_code == 200 else None
-        payload = {"message": commit_message, "content": content, "branch": BRANCH}
-        if sha:
-            payload["sha"] = sha
-        r = requests.put(url, headers=headers, json=payload)
-        if r.status_code in [200, 201]:
-            st.sidebar.success(f"✅ {os.path.basename(local_file)} pushed to GitHub successfully!")
-        else:
-            st.sidebar.error(f"❌ GitHub push failed for {local_file}: {r.json()}")
+
+        for repo in [REPO_1, REPO_2]:
+            url = f"https://api.github.com/repos/{OWNER}/{repo}/contents/{remote_path}"
+            r = requests.get(url, headers=headers)
+            sha = r.json().get("sha") if r.status_code == 200 else None
+            payload = {"message": commit_message, "content": content, "branch": BRANCH}
+            if sha:
+                payload["sha"] = sha
+
+            r = requests.put(url, headers=headers, json=payload)
+            if r.status_code in [200, 201]:
+                st.sidebar.success(f"✅ {os.path.basename(local_file)} pushed to {repo} successfully!")
+            else:
+                st.sidebar.error(f"❌ Push failed for {repo}: {r.json()}")
     except Exception as e:
         st.sidebar.error(f"Error pushing file {local_file}: {e}")
 
@@ -127,37 +130,32 @@ def push_to_github(local_file, remote_path, commit_message="Update file"):
 # -------------------------
 def get_github_file_timestamp():
     try:
-        url = f"https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/timestamp.txt"
+        url = f"https://raw.githubusercontent.com/{OWNER}/{REPO_1}/{BRANCH}/timestamp.txt"
         r = requests.get(url)
-        if r.status_code == 200:
-            return r.text.strip()
-        else:
-            return "No GitHub timestamp found."
+        return r.text.strip() if r.status_code == 200 else "No GitHub timestamp found."
     except Exception as e:
         return f"Error fetching timestamp: {e}"
 
-github_timestamp = get_github_file_timestamp()
-st.markdown(f"🕒 **Last Updated (from GitHub):** {github_timestamp}")
+st.markdown(f"🕒 **Last Updated (from GitHub):** {get_github_file_timestamp()}")
 
 # -------------------------
-# Upload & Download Section
+# Upload / Download
 # -------------------------
 if password == correct_password:
     uploaded_file = st.sidebar.file_uploader("Upload Excel File", type=["xlsx", "xls"])
 
     if uploaded_file is not None:
-        with st.spinner("Uploading file..."):
-            with open(UPLOAD_PATH, "wb") as f:
-                f.write(uploaded_file.getbuffer())
+        with open(UPLOAD_PATH, "wb") as f:
+            f.write(uploaded_file.getbuffer())
 
-            timezone = pytz.timezone("Asia/Kolkata")
-            upload_time = datetime.now(timezone).strftime("%d-%m-%Y %H:%M:%S")
-            save_timestamp(upload_time)
-            save_uploaded_filename(uploaded_file.name)
+        timezone = pytz.timezone("Asia/Kolkata")
+        upload_time = datetime.now(timezone).strftime("%d-%m-%Y %H:%M:%S")
+        save_timestamp(upload_time)
+        save_uploaded_filename(uploaded_file.name)
 
-            st.sidebar.success(f"✅ File uploaded at {upload_time}")
-            push_to_github(UPLOAD_PATH, "Master-Stock Sheet Original.xlsx", commit_message=f"Uploaded {uploaded_file.name}")
-            push_to_github(TIMESTAMP_PATH, "timestamp.txt", commit_message="Updated timestamp")
+        st.sidebar.success(f"✅ File uploaded at {upload_time}")
+        push_to_github(UPLOAD_PATH, "Master-Stock Sheet Original.xlsx", commit_message=f"Uploaded {uploaded_file.name}")
+        push_to_github(TIMESTAMP_PATH, "timestamp.txt", commit_message="Updated timestamp")
 
     if os.path.exists(UPLOAD_PATH):
         with open(UPLOAD_PATH, "rb") as f:
@@ -176,21 +174,17 @@ else:
 # -------------------------
 @st.cache_data
 def load_data_from_github():
-    url = f"https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/{UPLOAD_PATH.replace(' ', '%20')}"
+    url = f"https://raw.githubusercontent.com/{OWNER}/{REPO_1}/{BRANCH}/{UPLOAD_PATH.replace(' ', '%20')}"
     r = requests.get(url)
     return pd.ExcelFile(io.BytesIO(r.content))
 
 if not os.path.exists(UPLOAD_PATH):
-    try:
-        xl = load_data_from_github()
-    except Exception as e:
-        st.error(f"❌ Error loading Excel from GitHub: {e}")
-        st.stop()
+    xl = load_data_from_github()
 else:
     xl = pd.ExcelFile(UPLOAD_PATH)
 
 # -------------------------
-# Allowed sheets
+# Allowed Sheets
 # -------------------------
 allowed_sheets = [s for s in ["Current Inventory", "Item Wise Current Inventory", "Dispatches"] if s in xl.sheet_names]
 if not allowed_sheets:
@@ -199,87 +193,71 @@ if not allowed_sheets:
 
 sheet_name = inventory_type
 df = xl.parse(sheet_name)
-st.success(f"✅ **{sheet_name}** Loaded Successfully!")
+remarks_col = find_column(df, ["Remarks", "Remark", "Notes", "Comments"])
 check_col = find_column(df, ["Check", "Location", "Status", "Type", "StockType"])
 
 # -------------------------
 # Tabs
 # -------------------------
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["🏠 Local", "🚚 Outstation", "📦 Other", "🔍 Search", "📝 Update Remarks"])  # 🔧 NEW
+tab1, tab2, tab3, tab4 = st.tabs(["🏠 Local", "🚚 Outstation", "📦 Other", "🔍 Search"])
 
 # -------------------------
-# Inventory Tabs
+# Function to update Excel
+# -------------------------
+def update_excel(updated_df, commit_message="Updated Remarks"):
+    updated_df.to_excel(UPLOAD_PATH, sheet_name=sheet_name, index=False)
+    timezone = pytz.timezone("Asia/Kolkata")
+    update_time = datetime.now(timezone).strftime("%d-%m-%Y %H:%M:%S")
+    save_timestamp(update_time)
+    push_to_github(UPLOAD_PATH, "Master-Stock Sheet Original.xlsx", commit_message=commit_message)
+    push_to_github(TIMESTAMP_PATH, "timestamp.txt", commit_message="Updated timestamp")
+
+# -------------------------
+# Local / Outstation / Other
 # -------------------------
 if check_col and sheet_name != "Dispatches":
     check_vals = df[check_col].astype(str).str.strip().str.lower()
-    with tab1:
-        st.subheader("🏠 Local Inventory")
-        st.dataframe(df[check_vals == "local"], use_container_width=True, height=600)
-    with tab2:
-        st.subheader("🚚 Outstation Inventory")
-        st.dataframe(df[check_vals == "outstation"], use_container_width=True, height=600)
-    with tab3:
-        st.subheader("📦 Other Inventory")
-        st.dataframe(df[~check_vals.isin(["local", "outstation"])], use_container_width=True, height=600)
+
+    for tab, title, condition in [
+        (tab1, "🏠 Local Inventory", check_vals == "local"),
+        (tab2, "🚚 Outstation Inventory", check_vals == "outstation"),
+        (tab3, "📦 Other Inventory", ~check_vals.isin(["local", "outstation"]))
+    ]:
+        with tab:
+            st.subheader(title)
+            view_df = df[condition].copy()
+            if remarks_col:
+                editable_df = st.data_editor(view_df, use_container_width=True, height=600, key=title)
+                if password == correct_password:
+                    if st.button(f"🔄 Update Remarks ({title})"):
+                        # Update main DataFrame
+                        df.update(editable_df)
+                        update_excel(df, commit_message=f"{title} Remarks updated")
+                        st.success("✅ Remarks updated and pushed to GitHub successfully!")
+                else:
+                    st.warning("Enter correct password to enable update.")
+            else:
+                st.warning("⚠️ 'Remarks' column not found.")
 else:
-    st.warning("No valid 'Check' column found.")
+    st.warning("⚠️ No valid 'Check' column found.")
 
 # -------------------------
 # Search Tab
 # -------------------------
 with tab4:
     st.subheader("🔍 Search Inventory")
-    search_sheet = st.selectbox("Select sheet to search", allowed_sheets, index=0)
-    search_df = xl.parse(search_sheet)
-
-    item_col = find_column(search_df, ["Item Code", "ItemCode", "SKU", "Product Code"])
-    customer_col = find_column(search_df, ["Customer Name", "CustomerName", "Customer", "CustName"])
-    brand_col = find_column(search_df, ["Brand", "BrandName", "Product Brand", "Company"])
-    remarks_col = find_column(search_df, ["Remarks", "Remark", "Notes", "Comments"])
-    description_col = find_column(search_df, ["Description", "Discription", "Item Description", "ItemDiscription", "Disc"])
-
-    search_term = st.text_input("Enter search term:")
-    if search_term:
-        cols_to_search = [item_col, customer_col, brand_col, remarks_col, description_col]
-        mask = pd.Series(False, index=search_df.index)
-        for c in cols_to_search:
-            if c:
-                mask |= search_df[c].astype(str).str.contains(search_term, case=False, na=False)
-        df_filtered = search_df[mask]
-        if not df_filtered.empty:
-            st.dataframe(df_filtered, use_container_width=True, height=600)
+    search_df = df.copy()
+    if remarks_col:
+        editable_search = st.data_editor(search_df, use_container_width=True, height=600, key="search_tab")
+        if password == correct_password:
+            if st.button("🔄 Update Remarks (Search)"):
+                df.update(editable_search)
+                update_excel(df, commit_message="Updated Remarks (Search Tab)")
+                st.success("✅ Remarks updated and pushed to GitHub successfully!")
         else:
-            st.warning("No matching results found.")
-
-# -------------------------
-# 🔧 NEW: Update Remarks Tab
-# -------------------------
-with tab5:
-    st.subheader("📝 Update Remarks")
-
-    remarks_col = find_column(df, ["Remarks", "Remark", "Notes", "Comments"])
-    if remarks_col is None:
-        st.error("❌ No 'Remarks' column found in this sheet.")
+            st.warning("Enter correct password to enable update.")
     else:
-        editable_df = st.data_editor(df[[remarks_col]], use_container_width=True, height=400, key="edit_remarks")
-        
-        if password != correct_password:
-            st.warning("Enter correct password in sidebar to enable updates.")
-        else:
-            if st.button("🔄 Update Remarks in Excel"):
-                with st.spinner("Updating remarks..."):
-                    df[remarks_col] = editable_df[remarks_col]
-                    with pd.ExcelWriter(UPLOAD_PATH, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
-                        df.to_excel(writer, sheet_name=sheet_name, index=False)
-
-                    timezone = pytz.timezone("Asia/Kolkata")
-                    update_time = datetime.now(timezone).strftime("%d-%m-%Y %H:%M:%S")
-                    save_timestamp(update_time)
-
-                    push_to_github(UPLOAD_PATH, "Master-Stock Sheet Original.xlsx", commit_message="Updated Remarks")
-                    push_to_github(TIMESTAMP_PATH, "timestamp.txt", commit_message="Updated timestamp")
-
-                    st.success("✅ Remarks updated and pushed to GitHub successfully!")
+        st.warning("⚠️ 'Remarks' column not found.")
 
 # -------------------------
 # Footer
