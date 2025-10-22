@@ -245,12 +245,15 @@ else:
 # -------------------------
 # Search Tab
 # -------------------------
+
 with tab4:
     st.subheader("🔍 Search Inventory")
+
+    # --- Sheet selection ---
     search_sheet = st.selectbox("Select sheet to search", allowed_sheets, index=0)
     search_df = xl.parse(search_sheet)
-    
-    # Columns Identification
+
+    # --- Identify columns dynamically ---
     item_col = find_column(search_df, ["Item Code", "ItemCode", "SKU", "Product Code"])
     customer_col = find_column(search_df, ["Customer Name", "CustomerName", "Customer", "CustName"])
     brand_col = find_column(search_df, ["Brand", "BrandName", "Product Brand", "Company"])
@@ -259,10 +262,10 @@ with tab4:
     date_col = find_column(search_df, ["Date", "Dispatch Date", "Created On", "Order Date"])
     description_col = find_column(search_df, ["Description", "Discription", "Item Description", "ItemDiscription", "Disc"])
 
-    df_filtered = search_df.copy()  # We'll work with df_filtered for editing
+    df_filtered = search_df.copy()
     search_performed = False
 
-    # Search Logic for Different Sheets
+    # --- SEARCH LOGIC ---
     if search_sheet == "Current Inventory":
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -335,30 +338,30 @@ with tab4:
             search_performed = True
             df_filtered = df_filtered[df_filtered[customer_col].astype(str).str.contains(search_customer, case=False, na=False)]
 
-    # Show filtered results
+    # --- SHOW SINGLE EDITABLE RESULT ---
     if search_performed:
         if df_filtered.empty:
             st.warning("No matching records found.")
         else:
-            st.dataframe(df_filtered, use_container_width=True, height=600)
-
-        # Editable Remarks Section
-        if remarks_col:
+            st.markdown("### ✏️ Editable Search Results")
             editable_search = st.data_editor(df_filtered, use_container_width=True, height=600, key="search_tab")
-            password = st.text_input("Enter password to update remarks", type="password")
-            
-            if password == correct_password:
-                if st.button("🔄 Update Remarks (Search)"):
-                    # Capture the updated dataframe from the data editor
-                    df_filtered.update(editable_search)  # Update the filtered dataframe with the edited values
-                    # You may need to merge it back with the original df, depending on your update logic
-                    df.update(df_filtered)  # Update the original df (or you can directly push df_filtered to GitHub)
-                    update_excel(df, commit_message="Updated Remarks (Search Tab)")
-                    st.success("✅ Remarks updated and pushed to GitHub successfully!")
+
+            if remarks_col:
+                password = st.text_input("Enter password to update remarks", type="password")
+                if password == correct_password:
+                    if st.button("🔄 Update Remarks (Search)"):
+                        df_filtered.update(editable_search)
+                        df.update(df_filtered)
+                        update_excel(df, commit_message="Updated Remarks (Search Tab)")
+                        st.success("✅ Remarks updated and pushed to GitHub successfully!")
+                else:
+                    st.warning("Enter correct password to enable update.")
             else:
-                st.warning("Enter correct password to enable update.")
-        else:
-            st.warning("⚠️ 'Remarks' column not found.")
+                st.warning("⚠️ 'Remarks' column not found.")
+
+
+
+
 
 # -------------------------
 # Footer
@@ -368,6 +371,7 @@ st.markdown("""
     © 2025 Stock | Created by Mohit Sharma
 </div>
 """, unsafe_allow_html=True)
+
 
 
 
