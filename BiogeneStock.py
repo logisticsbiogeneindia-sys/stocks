@@ -259,7 +259,7 @@ with tab4:
     date_col = find_column(search_df, ["Date", "Dispatch Date", "Created On", "Order Date"])
     description_col = find_column(search_df, ["Description", "Discription", "Item Description", "ItemDiscription", "Disc"])
 
-    df_filtered = search_df.copy()
+    df_filtered = search_df.copy()  # We'll work with df_filtered for editing
     search_performed = False
 
     # Search Logic for Different Sheets
@@ -349,14 +349,16 @@ with tab4:
             
             if password == correct_password:
                 if st.button("🔄 Update Remarks (Search)"):
-                    df.update(editable_search)
+                    # Capture the updated dataframe from the data editor
+                    df_filtered.update(editable_search)  # Update the filtered dataframe with the edited values
+                    # You may need to merge it back with the original df, depending on your update logic
+                    df.update(df_filtered)  # Update the original df (or you can directly push df_filtered to GitHub)
                     update_excel(df, commit_message="Updated Remarks (Search Tab)")
                     st.success("✅ Remarks updated and pushed to GitHub successfully!")
             else:
                 st.warning("Enter correct password to enable update.")
         else:
             st.warning("⚠️ 'Remarks' column not found.")
-
 
 # -------------------------
 # Footer
@@ -366,6 +368,7 @@ st.markdown("""
     © 2025 Stock | Created by Mohit Sharma
 </div>
 """, unsafe_allow_html=True)
+
 
 
 
