@@ -335,7 +335,17 @@ with tab4:
             search_performed = True
             df_filtered = df_filtered[df_filtered[customer_col].astype(str).str.contains(search_customer, case=False, na=False)]
 
-  
+    # Show filtered results
+    if search_performed:
+        if df_filtered.empty:
+            st.warning("No matching records found.")
+        else:
+            st.dataframe(df_filtered, use_container_width=True, height=600)
+
+        # Editable Remarks Section
+        if remarks_col:
+            editable_search = st.data_editor(df_filtered, use_container_width=True, height=600, key="search_tab")
+            password = st.text_input("Enter password to update remarks", type="password")
             
             if password == correct_password:
                 if st.button("🔄 Update Remarks (Search)"):
@@ -358,6 +368,7 @@ st.markdown("""
     © 2025 Stock | Created by Mohit Sharma
 </div>
 """, unsafe_allow_html=True)
+
 
 
 
