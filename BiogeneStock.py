@@ -87,7 +87,7 @@ def load_uploaded_filename():
 # GitHub Config (multi-repo)
 # -------------------------
 OWNER = "logisticsbiogeneindia-sys"
-REPO_1 = "stock"
+REPO_1 = "stocks"
 REPO_2 = "Biogeneindia"
 BRANCH = "main"
 TOKEN = st.secrets["GITHUB_TOKEN"]
@@ -368,6 +368,7 @@ st.markdown("""
     © 2025 Stock | Created by Mohit Sharma
 </div>
 """, unsafe_allow_html=True)
+
 
 
 
