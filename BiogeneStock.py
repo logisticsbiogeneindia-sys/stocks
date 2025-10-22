@@ -247,18 +247,116 @@ else:
 # -------------------------
 with tab4:
     st.subheader("🔍 Search Inventory")
-    search_df = df.copy()
-    if remarks_col:
-        editable_search = st.data_editor(search_df, use_container_width=True, height=600, key="search_tab")
-        if password == correct_password:
-            if st.button("🔄 Update Remarks (Search)"):
-                df.update(editable_search)
-                update_excel(df, commit_message="Updated Remarks (Search Tab)")
-                st.success("✅ Remarks updated and pushed to GitHub successfully!")
+    search_sheet = st.selectbox("Select sheet to search", allowed_sheets, index=0)
+    search_df = xl.parse(search_sheet)
+    
+    # Columns Identification
+    item_col = find_column(search_df, ["Item Code", "ItemCode", "SKU", "Product Code"])
+    customer_col = find_column(search_df, ["Customer Name", "CustomerName", "Customer", "CustName"])
+    brand_col = find_column(search_df, ["Brand", "BrandName", "Product Brand", "Company"])
+    remarks_col = find_column(search_df, ["Remarks", "Remark", "Notes", "Comments"])
+    awb_col = find_column(search_df, ["AWB", "AWB Number", "Tracking Number"])
+    date_col = find_column(search_df, ["Date", "Dispatch Date", "Created On", "Order Date"])
+    description_col = find_column(search_df, ["Description", "Discription", "Item Description", "ItemDiscription", "Disc"])
+
+    df_filtered = search_df.copy()
+    search_performed = False
+
+    # Search Logic for Different Sheets
+    if search_sheet == "Current Inventory":
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            search_customer = st.text_input("Search by Customer Name").strip()
+        with col2:
+            search_brand = st.text_input("Search by Brand").strip()
+        with col3:
+            search_remarks = st.text_input("Search by Remarks").strip()
+
+        if search_customer and customer_col:
+            search_performed = True
+            df_filtered = df_filtered[df_filtered[customer_col].astype(str).str.contains(search_customer, case=False, na=False)]
+        if search_brand and brand_col:
+            search_performed = True
+            df_filtered = df_filtered[df_filtered[brand_col].astype(str).str.contains(search_brand, case=False, na=False)]
+        if search_remarks and remarks_col:
+            search_performed = True
+            df_filtered = df_filtered[df_filtered[remarks_col].astype(str).str.contains(search_remarks, case=False, na=False)]
+
+    elif search_sheet == "Item Wise Current Inventory":
+        col1, col2, col3, col4, col5 = st.columns(5)
+        with col1:
+            search_item = st.text_input("Search by Item Code").strip()
+        with col2:
+            search_customer = st.text_input("Search by Customer Name").strip()
+        with col3:
+            search_brand = st.text_input("Search by Brand").strip()
+        with col4:
+            search_remarks = st.text_input("Search by Remarks").strip()
+        with col5:
+            search_description = st.text_input("Search by Description").strip()
+
+        if search_item and item_col:
+            search_performed = True
+            df_filtered = df_filtered[df_filtered[item_col].astype(str).str.contains(search_item, case=False, na=False)]
+        if search_customer and customer_col:
+            search_performed = True
+            df_filtered = df_filtered[df_filtered[customer_col].astype(str).str.contains(search_customer, case=False, na=False)]
+        if search_brand and brand_col:
+            search_performed = True
+            df_filtered = df_filtered[df_filtered[brand_col].astype(str).str.contains(search_brand, case=False, na=False)]
+        if search_remarks and remarks_col:
+            search_performed = True
+            df_filtered = df_filtered[df_filtered[remarks_col].astype(str).str.contains(search_remarks, case=False, na=False)]
+        if search_description and description_col:
+            search_performed = True
+            df_filtered = df_filtered[df_filtered[description_col].astype(str).str.contains(search_description, case=False, na=False)]
+
+    elif search_sheet == "Dispatches":
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            date_range = st.date_input("Select Date Range", [])
+        with col2:
+            search_awb = st.text_input("Search by AWB Number").strip()
+        with col3:
+            search_customer = st.text_input("Search by Customer Name").strip()
+
+        if date_range and len(date_range) == 2 and date_col:
+            start, end = date_range
+            search_performed = True
+            df_filtered[date_col] = pd.to_datetime(df_filtered[date_col], errors="coerce")
+            df_filtered = df_filtered[
+                (df_filtered[date_col] >= pd.to_datetime(start)) & 
+                (df_filtered[date_col] <= pd.to_datetime(end))
+            ]
+        if search_awb and awb_col:
+            search_performed = True
+            df_filtered = df_filtered[df_filtered[awb_col].astype(str).str.contains(search_awb, case=False, na=False)]
+        if search_customer and customer_col:
+            search_performed = True
+            df_filtered = df_filtered[df_filtered[customer_col].astype(str).str.contains(search_customer, case=False, na=False)]
+
+    # Show filtered results
+    if search_performed:
+        if df_filtered.empty:
+            st.warning("No matching records found.")
         else:
-            st.warning("Enter correct password to enable update.")
-    else:
-        st.warning("⚠️ 'Remarks' column not found.")
+            st.dataframe(df_filtered, use_container_width=True, height=600)
+
+        # Editable Remarks Section
+        if remarks_col:
+            editable_search = st.data_editor(df_filtered, use_container_width=True, height=600, key="search_tab")
+            password = st.text_input("Enter password to update remarks", type="password")
+            
+            if password == correct_password:
+                if st.button("🔄 Update Remarks (Search)"):
+                    df.update(editable_search)
+                    update_excel(df, commit_message="Updated Remarks (Search Tab)")
+                    st.success("✅ Remarks updated and pushed to GitHub successfully!")
+            else:
+                st.warning("Enter correct password to enable update.")
+        else:
+            st.warning("⚠️ 'Remarks' column not found.")
+
 
 # -------------------------
 # Footer
@@ -268,5 +366,6 @@ st.markdown("""
     © 2025 Stock | Created by Mohit Sharma
 </div>
 """, unsafe_allow_html=True)
+
 
 
