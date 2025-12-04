@@ -8,4 +8,5 @@ openai
 fuzzywuzzy
 bcrypt
 gdown
-ploty
+plotly
+
