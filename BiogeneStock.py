@@ -9,10 +9,10 @@ st.set_page_config(page_title="Inventory Search", layout="wide")
 
 st.title("Inventory Search")
 
-# -----------------------------
-# GitHub MasterSheet File URL
-# -----------------------------
-GITHUB_RAW_URL = "https://raw.githubusercontent.com/mohitsharma123/inv/main/mastersheet.xlsx"
+# ---------------------------------------------------------
+# Load EXACT GitHub file name (DO NOT CHANGE)
+# ---------------------------------------------------------
+GITHUB_RAW_URL = "https://raw.githubusercontent.com/mohitsharma123/inv/main/Master-Stock Sheet Original.xlsx"
 
 @st.cache_data(ttl=300)
 def load_excel_from_github(url):
@@ -28,25 +28,24 @@ if not excel_file:
 
 xl = pd.ExcelFile(excel_file)
 
-# -----------------------------
-# FORCE SELECT ONLY "MasterSheet"
-# -----------------------------
+# ---------------------------------------------------------
+# ALWAYS use only MasterSheet
+# ---------------------------------------------------------
 MASTER_SHEET_NAME = "MasterSheet"
 
 if MASTER_SHEET_NAME not in xl.sheet_names:
-    st.error(f"❌ '{MASTER_SHEET_NAME}' sheet not found in file.")
+    st.error(f"❌ '{MASTER_SHEET_NAME}' sheet not found in the file.")
     st.write("Available sheets:", xl.sheet_names)
     st.stop()
 
 sheet_name = MASTER_SHEET_NAME
 st.success(f"✔ Using sheet: **{sheet_name}**")
 
-# Load sheet
 df = xl.parse(sheet_name)
 
-# -----------------------------
-# FIND IMPORTANT COLUMNS
-# -----------------------------
+# ---------------------------------------------------------
+# COLUMN DETECTION
+# ---------------------------------------------------------
 def find_column(df, possible_names):
     for col in df.columns:
         cleaned = re.sub(r"[^A-Za-z0-9]", "", col).lower()
@@ -70,18 +69,18 @@ search_columns = {
 
 balance_qty_col = search_columns["Quantity"]
 
-# -----------------------------
-# SIDEBAR FILTER FOR BALANCE QTY
-# -----------------------------
+# ---------------------------------------------------------
+# BALANCE QTY FILTER (DEFAULT > 0)
+# ---------------------------------------------------------
 filter_balance = st.sidebar.checkbox("Show only Balance Qty > 0", value=True)
 
 if balance_qty_col and filter_balance:
     df[balance_qty_col] = pd.to_numeric(df[balance_qty_col], errors="coerce")
     df = df[df[balance_qty_col] > 0]
 
-# -----------------------------
+# ---------------------------------------------------------
 # SEARCH BOX
-# -----------------------------
+# ---------------------------------------------------------
 search_query = st.text_input("Search (Description / Item Code / Group / Brand):")
 
 def contains_word(text, query):
@@ -91,20 +90,21 @@ def contains_word(text, query):
     return re.search(pattern, str(text), flags=re.IGNORECASE) is not None
 
 if search_query.strip():
-    s = search_query.strip()
+    query = search_query.strip()
 
     filtered_df = df[
-        df[search_columns["Description"]].apply(lambda x: contains_word(x, s) if search_columns["Description"] else False)
-        | df[search_columns["Item Code"]].astype(str).str.contains(s, case=False, na=False)
-        | df[search_columns["Group Name"]].astype(str).str.contains(s, case=False, na=False)
-        | df[search_columns["Brand"]].astype(str).str.contains(s, case=False, na=False)
+        df[search_columns["Description"]].apply(lambda x: contains_word(x, query)
+            if search_columns["Description"] else False)
+        | df[search_columns["Item Code"]].astype(str).str.contains(query, case=False, na=False)
+        | df[search_columns["Group Name"]].astype(str).str.contains(query, case=False, na=False)
+        | df[search_columns["Brand"]].astype(str).str.contains(query, case=False, na=False)
     ]
 else:
     filtered_df = df
 
-# -----------------------------
+# ---------------------------------------------------------
 # DISPLAY RESULTS
-# -----------------------------
+# ---------------------------------------------------------
 if filtered_df.empty:
     st.warning("No matching records found.")
 else:
