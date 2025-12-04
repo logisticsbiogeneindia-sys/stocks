@@ -31,41 +31,13 @@ def find_column(df: pd.DataFrame, candidates: list) -> str | None:
 # Config & Styling
 # -------------------------
 st.set_page_config(page_title="Biogene India - Inventory Viewer", layout="wide")
-
 st.markdown("""
 <style>
 body {background-color: #f8f9fa; font-family: "Helvetica Neue", sans-serif;}
-.navbar {
- display: flex;
- align-items: center;
- background-color: #004a99;
- padding: 8px 16px;
- border-radius: 8px;
- color: white;
- position: sticky;
- top: 0;
- z-index: 1000;
-}
-.navbar img {
- height: 50px;
- margin-right: 15px;
-}
-.navbar h1 {
- font-size: 24px;
- margin: 0;
- font-weight: 700;
-}
-.footer {
- position: fixed;
- left: 0;
- bottom: 0;
- width: 100%;
- background-color: #004a99;
- color: white;
- text-align: center;
- padding: 8px;
- font-size: 14px;
-}
+.navbar { display: flex; align-items: center; background-color: #004a99; padding: 8px 16px; border-radius: 8px; color: white; position: sticky; top: 0; z-index: 1000; }
+.navbar img { height: 50px; margin-right: 15px; }
+.navbar h1 { font-size: 24px; margin: 0; font-weight: 700; }
+.footer { position: fixed; left: 0; bottom: 0; width: 100%; background-color: #004a99; color: white; text-align: center; padding: 8px; font-size: 14px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -89,7 +61,6 @@ st.markdown(f"""
 # Sidebar
 # -------------------------
 st.sidebar.header("⚙️ Settings")
-inventory_type = st.sidebar.selectbox("Choose Inventory Type", ["Current Inventory", "Item Wise Current Inventory"])
 password = st.sidebar.text_input("Enter Password to Upload/Download File", type="password")
 correct_password = st.secrets["PASSWORD"]
 
@@ -117,7 +88,6 @@ def load_uploaded_filename():
 OWNER = "logisticsbiogeneindia-sys"
 REPO = "Biogeneindia"
 BRANCH = "main"
-
 TOKEN = st.secrets["GITHUB_TOKEN"]
 headers = {"Authorization": f"Bearer {TOKEN}", "Accept": "application/vnd.github+json"}
 
@@ -137,21 +107,17 @@ def push_to_github(local_file, remote_path, commit_message="Update file"):
     try:
         with open(local_file, "rb") as f:
             content = base64.b64encode(f.read()).decode("utf-8")
-
         url = f"https://api.github.com/repos/{OWNER}/{REPO}/contents/{remote_path}"
         r = requests.get(url, headers=headers)
         sha = r.json().get("sha") if r.status_code == 200 else None
-
         payload = {"message": commit_message, "content": content, "branch": BRANCH}
         if sha:
             payload["sha"] = sha
-
         r = requests.put(url, headers=headers, json=payload)
         if r.status_code in [200, 201]:
             st.sidebar.success(f"✅ {os.path.basename(local_file)} pushed to GitHub successfully!")
         else:
             st.sidebar.error(f"❌ GitHub push failed for {local_file}: {r.json()}")
-
     except Exception as e:
         st.sidebar.error(f"Error pushing file {local_file}: {e}")
 
@@ -183,15 +149,14 @@ if password == correct_password:
             with open(UPLOAD_PATH, "wb") as f:
                 f.write(uploaded_file.getbuffer())
 
-        timezone = pytz.timezone("Asia/Kolkata")
-        upload_time = datetime.now(timezone).strftime("%d-%m-%Y %H:%M:%S")
-        save_timestamp(upload_time)
-        save_uploaded_filename(uploaded_file.name)
+            timezone = pytz.timezone("Asia/Kolkata")
+            upload_time = datetime.now(timezone).strftime("%d-%m-%Y %H:%M:%S")
+            save_timestamp(upload_time)
+            save_uploaded_filename(uploaded_file.name)
 
-        st.sidebar.success(f"✅ File uploaded at {upload_time}")
-
-        push_to_github(UPLOAD_PATH, "Master-Stock Sheet Original.xlsx", commit_message=f"Uploaded {uploaded_file.name}")
-        push_to_github(TIMESTAMP_PATH, "timestamp.txt", commit_message="Updated timestamp")
+            st.sidebar.success(f"✅ File uploaded at {upload_time}")
+            push_to_github(UPLOAD_PATH, "Master-Stock Sheet Original.xlsx", commit_message=f"Uploaded {uploaded_file.name}")
+            push_to_github(TIMESTAMP_PATH, "timestamp.txt", commit_message="Updated timestamp")
 
     if os.path.exists(UPLOAD_PATH):
         with open(UPLOAD_PATH, "rb") as f:
@@ -223,120 +188,75 @@ if not os.path.exists(UPLOAD_PATH):
 else:
     xl = pd.ExcelFile(UPLOAD_PATH)
 
-# ---------------------------------------------------------
-# 🚨 CHANGE #1: Always load "Mastersheet" only
-# ---------------------------------------------------------
+# -------------------------
+# Load Mastersheet only
+# -------------------------
 sheet_name = "Mastersheet"
-
-try:
-    df = xl.parse(sheet_name)
-    st.success(f"✅ **{sheet_name}** Loaded Successfully!")
-except Exception as e:
-    st.error(f"❌ Could not load sheet 'Mastersheet': {e}")
+if sheet_name not in xl.sheet_names:
+    st.error(f"❌ Sheet '{sheet_name}' not found in Excel.")
     st.stop()
 
-# ---------------------------------------------------------
-# 🚨 CHANGE #2: Apply BalanceQty > 0 filter
-# ---------------------------------------------------------
-bal_col = find_column(df, ["BalanceQty", "Balance Qty", "Qty", "Balance"])
-if bal_col:
-    df = df[df[bal_col] > 0]
+df = xl.parse(sheet_name)
+st.success(f"✅ Sheet '{sheet_name}' Loaded Successfully!")
 
 # -------------------------
-# Tabs
+# Default BalanceQty > 0 filter
+# -------------------------
+balance_col = find_column(df, ["BalanceQty", "Balance Qty", "Qty", "Balance"])
+if balance_col:
+    default_filter = st.sidebar.checkbox("Show only BalanceQty > 0", value=True)
+    if default_filter:
+        df = df[df[balance_col] > 0]
+else:
+    st.sidebar.warning("⚠ 'BalanceQty' column not found. Filter not applied.")
+
+# -------------------------
+# Tabs for Local/Outstation/Other/Unknown
 # -------------------------
 check_col = find_column(df, ["Check", "Location", "Status", "Type", "StockType"])
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["🏠 Local", "🚚 Outstation", "📦 Other","❓ Unknown", "🔍 Search"])
 
 if check_col:
     check_vals = df[check_col].astype(str).str.strip().str.lower()
-
     with tab1:
         st.subheader("🏠 Local Inventory")
         st.dataframe(df[check_vals == "local"], use_container_width=True, height=600)
-
     with tab2:
         st.subheader("🚚 Outstation Inventory")
         st.dataframe(df[check_vals == "outstation"], use_container_width=True, height=600)
-
     with tab3:
         st.subheader("📦 Other Inventory")
         st.dataframe(df[~check_vals.isin(["local", "outstation","unknown"])], use_container_width=True, height=600)
-
     with tab4:
         st.subheader("❓ Unknown")
         st.dataframe(df[check_vals == "unknown"], use_container_width=True, height=600)
-
 else:
-    with tab1:
-        st.subheader("📄 No Inventory Data")
+    for tab in [tab1, tab2]:
         st.warning("There is no 'Check' column found in the data.")
-    with tab2:
-        st.subheader("📄 No Dispatch Data")
-        st.warning("Please check your inventory for errors or missing columns.")
 
 # -------------------------
 # Search Tab
 # -------------------------
 with tab5:
     st.subheader("🔍 Search Inventory")
+    search_text = st.text_input("Search Item Code / Description / Brand / Customer")
+    df_filtered = df.copy()
+    if search_text.strip():
+        keyword = search_text.lower()
+        df_filtered = df_filtered[
+            df_filtered.astype(str).apply(lambda row: row.str.lower().str.contains(keyword).any(), axis=1)
+        ]
 
-    search_df = df.copy()
-
-    # Detect columns
-    item_col = find_column(search_df, ["Item Code", "ItemCode", "SKU", "Product Code"])
-    customer_col = find_column(search_df, ["Customer Name", "CustomerName", "Customer", "CustName"])
-    brand_col = find_column(search_df, ["Brand", "BrandName", "Product Brand", "Company"])
-    remarks_col = find_column(search_df, ["Remarks", "Remark", "Notes", "Comments"])
-    description_col = find_column(search_df, ["Description", "Discription", "Item Description", "Disc"])
-
-    col1, col2, col3, col4, col5 = st.columns(5)
-
-    with col1:
-        search_item = st.text_input("Search by Item Code").strip()
-    with col2:
-        search_customer = st.text_input("Search by Customer Name").strip()
-    with col3:
-        search_brand = st.text_input("Search by Brand").strip()
-    with col4:
-        search_remarks = st.text_input("Search by Remarks").strip()
-    with col5:
-        search_description = st.text_input("Search by Description").strip()
-
-    df_filtered = search_df.copy()
-    applied = False
-
-    if search_item and item_col:
-        applied = True
-        df_filtered = df_filtered[df_filtered[item_col].astype(str).str.contains(search_item, case=False, na=False)]
-
-    if search_customer and customer_col:
-        applied = True
-        df_filtered = df_filtered[df_filtered[customer_col].astype(str).str.contains(search_customer, case=False, na=False)]
-
-    if search_brand and brand_col:
-        applied = True
-        df_filtered = df_filtered[df_filtered[brand_col].astype(str).str.contains(search_brand, case=False, na=False)]
-
-    if search_remarks and remarks_col:
-        applied = True
-        df_filtered = df_filtered[df_filtered[remarks_col].astype(str).str.contains(search_remarks, case=False, na=False)]
-
-    if search_description and description_col:
-        applied = True
-        df_filtered = df_filtered[df_filtered[description_col].astype(str).str.contains(search_description, case=False, na=False)]
-
-    if applied:
-        if df_filtered.empty:
-            st.warning("No matching records found.")
-        else:
-            st.dataframe(df_filtered, use_container_width=True, height=600)
+    if df_filtered.empty:
+        st.warning("No matching records found.")
+    else:
+        st.dataframe(df_filtered, use_container_width=True, height=600)
 
 # -------------------------
 # Footer
 # -------------------------
 st.markdown("""
 <div class="footer">
- © 2025 Biogene India | Created By Mohit Sharma
+    © 2025 Biogene India | Created By Mohit Sharma
 </div>
 """, unsafe_allow_html=True)
