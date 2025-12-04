@@ -1,381 +1,302 @@
-import streamlit as st
+"""
+/app/streamlit_reports.py
+
+Streamlit app to upload the user's Excel (with columns provided),
+clean & compute derived fields, and show interactive reports + CSV exports.
+
+Run:
+    pip install -r requirements.txt
+    streamlit run /app/streamlit_reports.py
+
+requirements.txt minimal:
+streamlit
+pandas
+plotly
+openpyxl
+"""
+
+from io import BytesIO
 import pandas as pd
-import os
-import re
-from datetime import datetime
-import pytz
-import requests
-import base64
-import io
+import numpy as np
+import streamlit as st
+import plotly.express as px
+from datetime import timedelta
 
-# -------------------------
-# Helpers
-# -------------------------
-def normalize(s: str) -> str:
-    return re.sub(r'[^a-z0-9]', '', str(s).lower())
+st.set_page_config(layout="wide", page_title="Excel Reports Dashboard")
 
-def find_column(df: pd.DataFrame, candidates: list) -> str | None:
-    norm_map = {normalize(col): col for col in df.columns}
-    for cand in candidates:
-        key = normalize(cand)
-        if key in norm_map:
-            return norm_map[key]
-    for cand in candidates:
-        key = normalize(cand)
-        for norm_col, orig in norm_map.items():
-            if key in norm_col or norm_col in key:
-                return orig
-    return None
+# ---------- Helpers ----------
+def clean_column_name(c: str) -> str:
+    return (
+        str(c)
+        .strip()
+        .lower()
+        .replace("\n", " ")
+        .replace("\t", " ")
+        .replace(".", "")
+        .replace("/", " ")
+        .replace("  ", " ")
+        .replace(" ", "_")
+    )
 
-# -------------------------
-# Config & Styling
-# -------------------------
-st.set_page_config(page_title="Stock - Inventory Viewer", layout="wide")
-st.markdown("""
-<style>
-body {background-color: #f8f9fa; font-family: "Helvetica Neue", sans-serif;}
-.navbar { display: flex; align-items: center; background-color: #004a99; padding: 8px 16px; border-radius: 8px; color: white; position: sticky; top: 0; z-index: 1000; }
-.navbar img { height: 50px; margin-right: 15px; }
-.navbar h1 { font-size: 24px; margin: 0; font-weight: 700; }
-.footer { position: fixed; left: 0; bottom: 0; width: 100%; background-color: #004a99; color: white; text-align: center; padding: 8px; font-size: 14px; }
-</style>
-""", unsafe_allow_html=True)
+def load_excel(file_bytes):
+    try:
+        df = pd.read_excel(file_bytes, sheet_name=0, engine="openpyxl")
+    except Exception:
+        # fallback: try pandas default
+        df = pd.read_excel(file_bytes, sheet_name=0)
+    # normalize column names
+    df.columns = [clean_column_name(c) for c in df.columns]
+    return df
 
-# -------------------------
-# Navbar
-# -------------------------
-logo_path = "logonew.png"
-if os.path.exists(logo_path):
-    logo_html = f'<img src="data:image/png;base64,{base64.b64encode(open(logo_path,"rb").read()).decode()}" alt="Logo">'
-else:
-    logo_html = ""
+def parse_dates(df, cols):
+    for c in cols:
+        if c in df.columns:
+            df[c] = pd.to_datetime(df[c], errors="coerce")
+    return df
 
-st.markdown(f"""
-<div class="navbar">
-    {logo_html}
-    <h1>📦 Stock - Inventory Viewer</h1>
-</div>
-""", unsafe_allow_html=True)
+def ensure_numeric(df, cols):
+    for c in cols:
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+    return df
 
-# -------------------------
-# Sidebar
-# -------------------------
-st.sidebar.header("⚙️ Settings")
-inventory_type = st.sidebar.selectbox("Choose Inventory Type", ["Current Inventory", "Item Wise Current Inventory"])
-password = st.sidebar.text_input("Enter Password to Upload/Update File", type="password")
-correct_password = st.secrets["PASSWORD"]
-
-UPLOAD_PATH = "Master-Stock Sheet Original.xlsx"
-TIMESTAMP_PATH = "timestamp.txt"
-FILENAME_PATH = "uploaded_filename.txt"
-
-def save_timestamp(timestamp):
-    with open(TIMESTAMP_PATH, "w") as f:
-        f.write(timestamp)
-
-def save_uploaded_filename(filename):
-    with open(FILENAME_PATH, "w") as f:
-        f.write(filename)
-
-def load_uploaded_filename():
-    if os.path.exists(FILENAME_PATH):
-        with open(FILENAME_PATH, "r") as f:
-            return f.read().strip()
-    return "uploaded_inventory.xlsx"
-
-# -------------------------
-# GitHub Config (multi-repo)
-# -------------------------
-OWNER = "logisticsbiogeneindia-sys"
-REPO_1 = "stocks"
-REPO_2 = "Biogeneindia"
-BRANCH = "main"
-TOKEN = st.secrets["GITHUB_TOKEN"]
-headers = {"Authorization": f"Bearer {TOKEN}", "Accept": "application/vnd.github+json"}
-
-def check_github_auth():
-    r = requests.get("https://api.github.com/user", headers=headers)
-    if r.status_code == 200:
-        st.sidebar.success(f"🔑 GitHub Auth OK: {r.json().get('login')}")
+def compute_derived(df):
+    # Choose monetary amount column
+    if "taxable_value" in df.columns:
+        df["amount"] = df["taxable_value"]
+    elif "purchase_value" in df.columns:
+        df["amount"] = df["purchase_value"]
     else:
-        st.sidebar.error(f"❌ GitHub Auth failed: {r.status_code}")
+        # try alternative names from user columns list
+        for alt in ["purchase_value", "taxable value", "purchase value"]:
+            if alt in df.columns:
+                df["amount"] = df[alt]
+                break
+    # Closing balance to numeric
+    if "closing_balance" in df.columns:
+        df["closing_balance"] = pd.to_numeric(df["closing_balance"], errors="coerce")
+    # delivery_time_days: delivery_date - dispatch_date (fallbacks)
+    if "delivery_date" in df.columns and "dispatch_date" in df.columns:
+        df["delivery_time_days"] = (df["delivery_date"] - df["dispatch_date"]).dt.days
+    else:
+        # try other date combos
+        if "delivery_date" in df.columns and "goods_recd_date" in df.columns:
+            df["delivery_time_days"] = (df["delivery_date"] - df["goods_recd_date"]).dt.days
+        else:
+            df["delivery_time_days"] = np.nan
+    # day names
+    for col in ["dispatch_date", "delivery_date", "invoice_date"]:
+        if col in df.columns:
+            df[f"{col}_day"] = df[col].dt.day_name()
+    # safe numeric for amount
+    if "amount" in df.columns:
+        df["amount"] = pd.to_numeric(df["amount"], errors="coerce").fillna(0)
+    return df
 
-check_github_auth()
+def filter_df(df, start_date, end_date, customer, brand, item_code):
+    ddf = df.copy()
+    if "invoice_date" in ddf.columns and start_date:
+        ddf = ddf[(ddf["invoice_date"] >= pd.Timestamp(start_date)) & (ddf["invoice_date"] <= pd.Timestamp(end_date))]
+    if customer and "customer_name" in ddf.columns:
+        ddf = ddf[ddf["customer_name"].isin(customer)]
+    if brand and "brand" in ddf.columns:
+        ddf = ddf[ddf["brand"].isin(brand)]
+    if item_code and "item_code" in ddf.columns:
+        ddf = ddf[ddf["item_code"].isin(item_code)]
+    return ddf
 
-# -------------------------
-# Push file to both repos
-# -------------------------
-def push_to_github(local_file, remote_path, commit_message="Update file"):
-    try:
-        with open(local_file, "rb") as f:
-            content = base64.b64encode(f.read()).decode("utf-8")
+def df_to_csv_bytes(df):
+    b = BytesIO()
+    df.to_csv(b, index=False)
+    b.seek(0)
+    return b.read()
 
-        for repo in [REPO_1, REPO_2]:
-            url = f"https://api.github.com/repos/{OWNER}/{repo}/contents/{remote_path}"
-            r = requests.get(url, headers=headers)
-            sha = r.json().get("sha") if r.status_code == 200 else None
-            payload = {"message": commit_message, "content": content, "branch": BRANCH}
-            if sha:
-                payload["sha"] = sha
+# ---------- UI ----------
+st.title("📊 Excel → Streamlit Reports")
+st.caption("Upload your Excel file (columns you listed are supported). App will auto-detect and produce reports.")
 
-            r = requests.put(url, headers=headers, json=payload)
-            if r.status_code in [200, 201]:
-                st.sidebar.success(f"✅ {os.path.basename(local_file)} pushed to {repo} successfully!")
-            else:
-                st.sidebar.error(f"❌ Push failed for {repo}: {r.json()}")
-    except Exception as e:
-        st.sidebar.error(f"Error pushing file {local_file}: {e}")
+upload = st.file_uploader("Upload Excel file (.xlsx/.xls)", type=["xlsx", "xls"], accept_multiple_files=False)
 
-# -------------------------
-# GitHub Timestamp
-# -------------------------
-def get_github_file_timestamp():
-    try:
-        url = f"https://raw.githubusercontent.com/{OWNER}/{REPO_1}/{BRANCH}/timestamp.txt"
-        r = requests.get(url)
-        return r.text.strip() if r.status_code == 200 else "No GitHub timestamp found."
-    except Exception as e:
-        return f"Error fetching timestamp: {e}"
-
-st.markdown(f"🕒 **Last Updated (from GitHub):** {get_github_file_timestamp()}")
-
-# -------------------------
-# Upload / Download
-# -------------------------
-if password == correct_password:
-    uploaded_file = st.sidebar.file_uploader("Upload Excel File", type=["xlsx", "xls"])
-
-    if uploaded_file is not None:
-        with open(UPLOAD_PATH, "wb") as f:
-            f.write(uploaded_file.getbuffer())
-
-        timezone = pytz.timezone("Asia/Kolkata")
-        upload_time = datetime.now(timezone).strftime("%d-%m-%Y %H:%M:%S")
-        save_timestamp(upload_time)
-        save_uploaded_filename(uploaded_file.name)
-
-        st.sidebar.success(f"✅ File uploaded at {upload_time}")
-        push_to_github(UPLOAD_PATH, "Master-Stock Sheet Original.xlsx", commit_message=f"Uploaded {uploaded_file.name}")
-        push_to_github(TIMESTAMP_PATH, "timestamp.txt", commit_message="Updated timestamp")
-
-    if os.path.exists(UPLOAD_PATH):
-        with open(UPLOAD_PATH, "rb") as f:
-            st.sidebar.download_button(
-                label="⬇️ Download Uploaded Excel File",
-                data=f,
-                file_name=load_uploaded_filename(),
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-else:
-    if password:
-        st.sidebar.error("❌ Incorrect password!")
-
-# -------------------------
-# Load Excel
-# -------------------------
-@st.cache_data
-def load_data_from_github():
-    url = f"https://raw.githubusercontent.com/{OWNER}/{REPO_1}/{BRANCH}/{UPLOAD_PATH.replace(' ', '%20')}"
-    r = requests.get(url)
-    return pd.ExcelFile(io.BytesIO(r.content))
-
-if not os.path.exists(UPLOAD_PATH):
-    xl = load_data_from_github()
-else:
-    xl = pd.ExcelFile(UPLOAD_PATH)
-
-# -------------------------
-# Allowed Sheets
-# -------------------------
-allowed_sheets = [s for s in ["Current Inventory", "Item Wise Current Inventory", "Dispatches"] if s in xl.sheet_names]
-if not allowed_sheets:
-    st.error("❌ No valid sheets found in file!")
+if upload is None:
+    st.info("Please upload your Excel file to generate reports. (Use the columns you shared).")
     st.stop()
 
-sheet_name = inventory_type
-df = xl.parse(sheet_name)
-remarks_col = find_column(df, ["Remarks", "Remark", "Notes", "Comments"])
-check_col = find_column(df, ["Check", "Location", "Status", "Type", "StockType"])
+# Load
+with st.spinner("Loading and parsing Excel..."):
+    df_raw = load_excel(upload)
 
-# -------------------------
-# Tabs
-# -------------------------
-tab1, tab2, tab3, tab4 = st.tabs(["🏠 Local", "🚚 Outstation", "📦 Other", "🔍 Search"])
+# Quick preview & allow column mapping if necessary
+st.subheader("Data preview")
+st.write("First 5 rows (column names normalized).")
+st.dataframe(df_raw.head())
 
-# -------------------------
-# Function to update Excel
-# -------------------------
-def update_excel(updated_df, commit_message="Updated Remarks"):
-    updated_df.to_excel(UPLOAD_PATH, sheet_name=sheet_name, index=False)
-    timezone = pytz.timezone("Asia/Kolkata")
-    update_time = datetime.now(timezone).strftime("%d-%m-%Y %H:%M:%S")
-    save_timestamp(update_time)
-    push_to_github(UPLOAD_PATH, "Master-Stock Sheet Original.xlsx", commit_message=commit_message)
-    push_to_github(TIMESTAMP_PATH, "timestamp.txt", commit_message="Updated timestamp")
+# Parse expected date columns
+expected_dates = ["invoice_date", "goods_recd_date", "dispatch_date", "delivery_date"]
+# There may be columns containing dots or slightly different names; try to map common variants:
+aliases = {
+    "invoice_date": ["invoice_date", "invoice date"],
+    "goods_recd_date": ["goods_recd_date", "goods recd date", "goods_recd._date"],
+    "dispatch_date": ["dispatch_date", "dispatch date"],
+    "delivery_date": ["delivery_date", "delivery date"],
+    "taxable_value": ["taxable_value", "taxable value"],
+    "purchase_value": ["purchase_value", "purchase value", "purchase_value_dollar/inr"],
+    "customer_name": ["customer_name", "customer name"],
+    "brand": ["brand"],
+    "item_code": ["item_code", "item code"],
+    "closing_balance": ["closing_balance", "closing balance"],
+}
 
-# -------------------------
-# Local / Outstation / Other
-# -------------------------
-if check_col and sheet_name != "Dispatches":
-    check_vals = df[check_col].astype(str).str.strip().str.lower()
+# Try to create canonical columns by detecting known aliases in existing columns
+col_map = {}
+for canonical, poss in aliases.items():
+    for p in poss:
+        if p in df_raw.columns:
+            col_map[canonical] = p
+            break
 
-    for tab, title, condition in [
-        (tab1, "🏠 Local Inventory", check_vals == "local"),
-        (tab2, "🚚 Outstation Inventory", check_vals == "outstation"),
-        (tab3, "📦 Other Inventory", ~check_vals.isin(["local", "outstation"]))
-    ]:
-        with tab:
-            st.subheader(title)
-            view_df = df[condition].copy()
-            if remarks_col:
-                editable_df = st.data_editor(view_df, use_container_width=True, height=600, key=title)
-                if password == correct_password:
-                    if st.button(f"🔄 Update Remarks ({title})"):
-                        # Update main DataFrame
-                        df.update(editable_df)
-                        update_excel(df, commit_message=f"{title} Remarks updated")
-                        st.success("✅ Remarks updated and pushed to GitHub successfully!")
-                else:
-                    st.warning("Enter correct password to enable update.")
-            else:
-                st.warning("⚠️ 'Remarks' column not found.")
-else:
-    st.warning("⚠️ No valid 'Check' column found.")
+# Create standardized columns by copying if found
+df = df_raw.copy()
+for canon, actual in col_map.items():
+    if actual in df.columns:
+        df[canon] = df[actual]
 
-# -------------------------
-# Search Tab
-# -------------------------
+# Parse dates & numeric
+df = parse_dates(df, expected_dates + ["invoice_date"])
+df = ensure_numeric(df, ["unit_price_dollar_inr", "unit_price_inr", "purchase_value", "taxable_value", "closing_balance", "amount"])
+df = compute_derived(df)
 
-with tab4:
-    st.subheader("🔍 Search Inventory")
+# Sidebar filters
+st.sidebar.header("Filters")
+min_date = df["invoice_date"].min() if "invoice_date" in df.columns else None
+max_date = df["invoice_date"].max() if "invoice_date" in df.columns else None
 
-    # --- Sheet selection ---
-    search_sheet = st.selectbox("Select sheet to search", allowed_sheets, index=0)
-    search_df = xl.parse(search_sheet)
+start_date = st.sidebar.date_input("Start date", value=min_date.date() if pd.notnull(min_date) else None)
+end_date = st.sidebar.date_input("End date", value=max_date.date() if pd.notnull(max_date) else None)
 
-    # --- Identify columns dynamically ---
-    item_col = find_column(search_df, ["Item Code", "ItemCode", "SKU", "Product Code"])
-    customer_col = find_column(search_df, ["Customer Name", "CustomerName", "Customer", "CustName"])
-    brand_col = find_column(search_df, ["Brand", "BrandName", "Product Brand", "Company"])
-    remarks_col = find_column(search_df, ["Remarks", "Remark", "Notes", "Comments"])
-    awb_col = find_column(search_df, ["AWB", "AWB Number", "Tracking Number"])
-    date_col = find_column(search_df, ["Date", "Dispatch Date", "Created On", "Order Date"])
-    description_col = find_column(search_df, ["Description", "Discription", "Item Description", "ItemDiscription", "Disc"])
+# Customer/brand/item selectors (multi-select)
+customers = sorted(df["customer_name"].dropna().unique().tolist()) if "customer_name" in df.columns else []
+brands = sorted(df["brand"].dropna().unique().tolist()) if "brand" in df.columns else []
+items = sorted(df["item_code"].dropna().unique().tolist()) if "item_code" in df.columns else []
 
-    df_filtered = search_df.copy()
-    search_performed = False
+sel_customers = st.sidebar.multiselect("Customer(s)", options=customers)
+sel_brands = st.sidebar.multiselect("Brand(s)", options=brands)
+sel_items = st.sidebar.multiselect("Item code(s)", options=items)
 
-    # --- SEARCH LOGIC ---
-    if search_sheet == "Current Inventory":
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            search_customer = st.text_input("Search by Customer Name").strip()
-        with col2:
-            search_brand = st.text_input("Search by Brand").strip()
-        with col3:
-            search_remarks = st.text_input("Search by Remarks").strip()
+filtered = filter_df(df, start_date, end_date, sel_customers, sel_brands, sel_items)
 
-        if search_customer and customer_col:
-            search_performed = True
-            df_filtered = df_filtered[df_filtered[customer_col].astype(str).str.contains(search_customer, case=False, na=False)]
-        if search_brand and brand_col:
-            search_performed = True
-            df_filtered = df_filtered[df_filtered[brand_col].astype(str).str.contains(search_brand, case=False, na=False)]
-        if search_remarks and remarks_col:
-            search_performed = True
-            df_filtered = df_filtered[df_filtered[remarks_col].astype(str).str.contains(search_remarks, case=False, na=False)]
+st.markdown("---")
+# KPIs
+st.subheader("Key Metrics")
+k1, k2, k3, k4 = st.columns(4)
+total_invoices = int(filtered.shape[0])
+total_amount = filtered["amount"].sum() if "amount" in filtered.columns else 0
+avg_delivery = filtered["delivery_time_days"].mean() if "delivery_time_days" in filtered.columns else np.nan
+total_closing = filtered["closing_balance"].sum() if "closing_balance" in filtered.columns else 0
+k1.metric("Invoices", f"{total_invoices:,}")
+k2.metric("Total Amount", f"{total_amount:,.2f}")
+k3.metric("Avg Delivery Days", f"{avg_delivery:.1f}" if not np.isnan(avg_delivery) else "N/A")
+k4.metric("Total Closing Balance", f"{total_closing:,.2f}")
 
-    elif search_sheet == "Item Wise Current Inventory":
-        col1, col2, col3, col4, col5 = st.columns(5)
-        with col1:
-            search_item = st.text_input("Search by Item Code").strip()
-        with col2:
-            search_customer = st.text_input("Search by Customer Name").strip()
-        with col3:
-            search_brand = st.text_input("Search by Brand").strip()
-        with col4:
-            search_remarks = st.text_input("Search by Remarks").strip()
-        with col5:
-            search_description = st.text_input("Search by Description").strip()
+st.markdown("---")
 
-        if search_item and item_col:
-            search_performed = True
-            df_filtered = df_filtered[df_filtered[item_col].astype(str).str.contains(search_item, case=False, na=False)]
-        if search_customer and customer_col:
-            search_performed = True
-            df_filtered = df_filtered[df_filtered[customer_col].astype(str).str.contains(search_customer, case=False, na=False)]
-        if search_brand and brand_col:
-            search_performed = True
-            df_filtered = df_filtered[df_filtered[brand_col].astype(str).str.contains(search_brand, case=False, na=False)]
-        if search_remarks and remarks_col:
-            search_performed = True
-            df_filtered = df_filtered[df_filtered[remarks_col].astype(str).str.contains(search_remarks, case=False, na=False)]
-        if search_description and description_col:
-            search_performed = True
-            df_filtered = df_filtered[df_filtered[description_col].astype(str).str.contains(search_description, case=False, na=False)]
+# Layout: charts left, tables right
+col_left, col_right = st.columns((2, 1))
 
-    elif search_sheet == "Dispatches":
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            date_range = st.date_input("Select Date Range", [])
-        with col2:
-            search_awb = st.text_input("Search by AWB Number").strip()
-        with col3:
-            search_customer = st.text_input("Search by Customer Name").strip()
+# Time series
+with col_left:
+    st.subheader("Amount over Time")
+    if "invoice_date" in filtered.columns and "amount" in filtered.columns:
+        ts = filtered.groupby(pd.Grouper(key="invoice_date", freq="W"))["amount"].sum().reset_index()
+        fig = px.line(ts, x="invoice_date", y="amount", title="Weekly Amount")
+        st.plotly_chart(fig, use_container_width=True)
+        st.download_button("Download time series CSV", data=df_to_csv_bytes(ts), file_name="time_series.csv")
+    else:
+        st.info("Need 'invoice_date' and 'amount' to show time series.")
 
-        if date_range and len(date_range) == 2 and date_col:
-            start, end = date_range
-            search_performed = True
-            df_filtered[date_col] = pd.to_datetime(df_filtered[date_col], errors="coerce")
-            df_filtered = df_filtered[
-                (df_filtered[date_col] >= pd.to_datetime(start)) & 
-                (df_filtered[date_col] <= pd.to_datetime(end))
-            ]
-        if search_awb and awb_col:
-            search_performed = True
-            df_filtered = df_filtered[df_filtered[awb_col].astype(str).str.contains(search_awb, case=False, na=False)]
-        if search_customer and customer_col:
-            search_performed = True
-            df_filtered = df_filtered[df_filtered[customer_col].astype(str).str.contains(search_customer, case=False, na=False)]
+    st.subheader("Top Customers")
+    if "customer_name" in filtered.columns and "amount" in filtered.columns:
+        cust = filtered.groupby("customer_name")["amount"].sum().reset_index().sort_values("amount", ascending=False).head(20)
+        fig2 = px.bar(cust, x="amount", y="customer_name", orientation="h", title="Top Customers by Amount")
+        st.plotly_chart(fig2, use_container_width=True)
+        st.download_button("Download top customers CSV", data=df_to_csv_bytes(cust), file_name="top_customers.csv")
+    else:
+        st.info("No customer/amount columns found.")
 
-    # --- SHOW SINGLE EDITABLE RESULT ---
-    if search_performed:
-        if df_filtered.empty:
-            st.warning("No matching records found.")
+    st.subheader("Delivery Time Distribution")
+    if "delivery_time_days" in filtered.columns:
+        ddf = filtered.dropna(subset=["delivery_time_days"])
+        if not ddf.empty:
+            fig3 = px.histogram(ddf, x="delivery_time_days", nbins=30, title="Delivery Time (days)")
+            st.plotly_chart(fig3, use_container_width=True)
+            st.download_button("Download delivery times CSV", data=df_to_csv_bytes(ddf[["dispatch_date","delivery_date","delivery_time_days","invoice_number"]].dropna()), file_name="delivery_times.csv")
         else:
-            st.markdown("### ✏️ Editable Search Results")
-            editable_search = st.data_editor(df_filtered, use_container_width=True, height=600, key="search_tab")
+            st.info("No delivery_time_days data after filtering.")
+    else:
+        st.info("delivery_time_days not available.")
 
-            if remarks_col:
-                password = st.text_input("Enter password to update remarks", type="password")
-                if password == correct_password:
-                    if st.button("🔄 Update Remarks (Search)"):
-                        df_filtered.update(editable_search)
-                        df.update(df_filtered)
-                        update_excel(df, commit_message="Updated Remarks (Search Tab)")
-                        st.success("✅ Remarks updated and pushed to GitHub successfully!")
-                else:
-                    st.warning("Enter correct password to enable update.")
-            else:
-                st.warning("⚠️ 'Remarks' column not found.")
+with col_right:
+    st.subheader("Top Items / Inventory")
+    if "item_code" in filtered.columns:
+        items_df = filtered.groupby("item_code").agg(
+            description=("discription" if "discription" in filtered.columns else filtered.columns[0], "first"),
+            total_qty_in=("in_qty" if "in_qty" in filtered.columns else "in_qty", "sum") if "in_qty" in filtered.columns else ("in_qty","count"),
+            total_qty_out=("out_qty" if "out_qty" in filtered.columns else "out_qty", "sum") if "out_qty" in filtered.columns else ("out_qty","count"),
+            closing_balance=("closing_balance", "sum") if "closing_balance" in filtered.columns else (filtered.columns[0], "count"),
+            total_amount=("amount", "sum") if "amount" in filtered.columns else (filtered.columns[0], "count"),
+        ).reset_index().sort_values("total_amount", ascending=False).head(50)
+        st.dataframe(items_df)
+        st.download_button("Download items CSV", data=df_to_csv_bytes(items_df), file_name="top_items.csv")
+    else:
+        st.info("item_code column not found.")
 
+    st.markdown("### Brand Distribution")
+    if "brand" in filtered.columns and "amount" in filtered.columns:
+        brand_df = filtered.groupby("brand")["amount"].sum().reset_index().sort_values("amount", ascending=False)
+        figb = px.pie(brand_df.head(10), names="brand", values="amount", title="Top Brands by Amount")
+        st.plotly_chart(figb, use_container_width=True)
+        st.download_button("Download brand CSV", data=df_to_csv_bytes(brand_df), file_name="brands.csv")
+    else:
+        st.info("brand or amount columns not available.")
 
+st.markdown("---")
+st.subheader("Dispatch Day vs Delivery Day (heatmap)")
+if "dispatch_date_day" in filtered.columns and "delivery_date_day" in filtered.columns:
+    pivot = filtered.pivot_table(index="dispatch_date_day", columns="delivery_date_day", values="invoice_number", aggfunc="count", fill_value=0)
+    # reorder days
+    days = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
+    pivot = pivot.reindex(index=[d for d in days if d in pivot.index], columns=[d for d in days if d in pivot.columns])
+    st.dataframe(pivot)
+    st.download_button("Download dispatch-delivery heatmap CSV", data=df_to_csv_bytes(pivot.reset_index()), file_name="dispatch_delivery_heatmap.csv")
+    try:
+        fig_heat = px.imshow(pivot.values, x=pivot.columns, y=pivot.index, aspect="auto", labels=dict(x="Delivery Day", y="Dispatch Day", color="Count"))
+        st.plotly_chart(fig_heat, use_container_width=True)
+    except Exception:
+        st.info("Could not render heatmap figure; table shown instead.")
+else:
+    st.info("Need both dispatch_date and delivery_date to build heatmap (columns: dispatch_date_day, delivery_date_day).")
 
+st.markdown("---")
+st.subheader("Full filtered data (preview & export)")
+st.dataframe(filtered.head(200))
+st.download_button("Download filtered data as CSV", data=df_to_csv_bytes(filtered), file_name="filtered_data.csv")
 
+st.markdown("---")
+st.subheader("Notes & Tips")
+st.markdown(
+    """
+- Column name normalization: original column names are cleaned (spaces → underscores, lowercased).
+- If app doesn't detect your date or amount columns, please ensure they exist and are spelled similarly to: `invoice date`, `dispatch date`, `delivery date`, `taxable value`, `purchase value`, `closing balance`, `customer name`, `brand`, `item code`.
+- You can modify and extend the code to add currency conversions, more KPIs, or PDF export.
+"""
+)
 
-# -------------------------
-# Footer
-# -------------------------
-st.markdown("""
-<div class="footer">
-    © 2025 Stock | Created by Mohit Sharma
-</div>
-""", unsafe_allow_html=True)
+# Small optional section: allow user to download a template of processed columns for mapping
+st.sidebar.markdown("---")
+if st.sidebar.button("Download sample mapping CSV"):
+    sample = pd.DataFrame({
+        "expected_column": ["invoice_date","goods_recd_date","dispatch_date","delivery_date","taxable_value","purchase_value","customer_name","brand","item_code","closing_balance","in_qty","out_qty","amount"],
+        "example_header_in_excel": ["Invoice Date","Goods Recd. Date","Dispatch Date","Delivery Date","Taxable Value","Purchase Value","Customer name","Brand","Item Code","Closing Balance","In Qty","Out Qty","Taxable Value"]
+    })
+    st.sidebar.download_button("Download mapping sample", data=df_to_csv_bytes(sample), file_name="column_mapping_sample.csv")
 
-
-
-
-
-
-
-
+st.success("Reports generated. Use filters on left to refine. Each visible table/chart has a download option.")
