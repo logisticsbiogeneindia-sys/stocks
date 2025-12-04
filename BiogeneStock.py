@@ -189,7 +189,7 @@ else:
     xl = pd.ExcelFile(UPLOAD_PATH)
 
 # -------------------------
-# Load Mastersheet only
+# Load MasterSheet only
 # -------------------------
 sheet_name = "MasterSheet"
 if sheet_name not in xl.sheet_names:
@@ -260,4 +260,5 @@ st.markdown("""
     © 2025 Biogene India | Created By Mohit Sharma
 </div>
 """, unsafe_allow_html=True)
+
 
