@@ -191,7 +191,7 @@ else:
 # -------------------------
 # Load Mastersheet only
 # -------------------------
-sheet_name = "Mastersheet"
+sheet_name = "MasterSheet"
 if sheet_name not in xl.sheet_names:
     st.error(f"❌ Sheet '{sheet_name}' not found in Excel.")
     st.stop()
@@ -260,3 +260,4 @@ st.markdown("""
     © 2025 Biogene India | Created By Mohit Sharma
 </div>
 """, unsafe_allow_html=True)
+
