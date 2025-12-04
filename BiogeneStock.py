@@ -6,122 +6,119 @@ from io import BytesIO
 from datetime import datetime
 
 st.set_page_config(page_title="Inventory Search", layout="wide")
-
 st.title("Inventory Search")
 
 # ---------------------------------------------------------
-# Load EXACT GitHub file name (DO NOT CHANGE)
+# GitHub RAW FILE (DO NOT CHANGE THE NAME)
 # ---------------------------------------------------------
-GITHUB_RAW_URL = "https://raw.githubusercontent.com/mohitsharma123/inv/main/Master-Stock Sheet Original.xlsx"
+GITHUB_RAW_URL = "https://raw.githubusercontent.com/logisticsbiogeneindia-sys/Biogeneindia/main/Master-Stock Sheet Original.xlsx"
 
+# ---------------------------------------------------------
+# Load Excel From GitHub
+# ---------------------------------------------------------
 @st.cache_data(ttl=300)
-def load_excel_from_github(url):
-    response = requests.get(url)
-    if response.status_code != 200:
-        st.error("❌ GitHub file not found or cannot be loaded.")
+def load_excel(url):
+    r = requests.get(url)
+    if r.status_code != 200:
+        st.error("❌ Could not load Excel from GitHub.")
         return None
-    return BytesIO(response.content)
+    return BytesIO(r.content)
 
-excel_file = load_excel_from_github(GITHUB_RAW_URL)
+excel_file = load_excel(GITHUB_RAW_URL)
 if not excel_file:
     st.stop()
 
 xl = pd.ExcelFile(excel_file)
 
 # ---------------------------------------------------------
-# ALWAYS use only MasterSheet
+# ALWAYS USE SHEET "MasterSheet"
 # ---------------------------------------------------------
 MASTER_SHEET_NAME = "MasterSheet"
 
 if MASTER_SHEET_NAME not in xl.sheet_names:
-    st.error(f"❌ '{MASTER_SHEET_NAME}' sheet not found in the file.")
+    st.error(f"❌ Sheet '{MASTER_SHEET_NAME}' not found in the Excel file!")
     st.write("Available sheets:", xl.sheet_names)
     st.stop()
 
-sheet_name = MASTER_SHEET_NAME
-st.success(f"✔ Using sheet: **{sheet_name}**")
-
-df = xl.parse(sheet_name)
+df = xl.parse(MASTER_SHEET_NAME)
+st.success("✔ Loaded sheet: MasterSheet")
 
 # ---------------------------------------------------------
-# COLUMN DETECTION
+# Column Finder
 # ---------------------------------------------------------
 def find_column(df, possible_names):
     for col in df.columns:
-        cleaned = re.sub(r"[^A-Za-z0-9]", "", col).lower()
-        for target in possible_names:
-            target_clean = re.sub(r"[^A-Za-z0-9]", "", target).lower()
-            if cleaned == target_clean:
+        col_clean = re.sub(r'[^A-Za-z0-9]', '', col).lower()
+        for name in possible_names:
+            name_clean = re.sub(r'[^A-Za-z0-9]', '', name).lower()
+            if col_clean == name_clean:
                 return col
-    for target in possible_names:
-        for col in df.columns:
-            if target.lower() in col.lower():
+
+    for col in df.columns:
+        for name in possible_names:
+            if name.lower() in col.lower():
                 return col
+
     return None
 
-search_columns = {
-    "Description": find_column(df, ["Description", "Desc", "Item Description", "Product Description"]),
-    "Item Code": find_column(df, ["Item Code", "ItemCode", "Code"]),
-    "Group Name": find_column(df, ["Group", "Group Name", "Category"]),
-    "Brand": find_column(df, ["Brand", "Brand Name", "Make"]),
-    "Quantity": find_column(df, ["Qty", "Quantity", "Balance Qty", "Available Qty", "Stock"])
-}
 
-balance_qty_col = search_columns["Quantity"]
+# Find columns
+description_col = find_column(df, ["Description", "Item Description", "Desc"])
+itemcode_col = find_column(df, ["Item Code", "ItemCode"])
+group_col = find_column(df, ["Group", "Group Name"])
+brand_col = find_column(df, ["Brand", "Brand Name"])
+balance_col = find_column(df, ["Balance Qty", "Qty", "Quantity"])
 
 # ---------------------------------------------------------
-# BALANCE QTY FILTER (DEFAULT > 0)
+# Balance Qty Filter (default = > 0)
 # ---------------------------------------------------------
-filter_balance = st.sidebar.checkbox("Show only Balance Qty > 0", value=True)
+st.sidebar.header("Filters")
+balance_filter = st.sidebar.checkbox("Show only Balance Qty > 0", value=True)
 
-if balance_qty_col and filter_balance:
-    df[balance_qty_col] = pd.to_numeric(df[balance_qty_col], errors="coerce")
-    df = df[df[balance_qty_col] > 0]
+if balance_col and balance_filter:
+    df[balance_col] = pd.to_numeric(df[balance_col], errors="coerce")
+    df = df[df[balance_col] > 0]
 
 # ---------------------------------------------------------
-# SEARCH BOX
+# Search Box
 # ---------------------------------------------------------
-search_query = st.text_input("Search (Description / Item Code / Group / Brand):")
+search_query = st.text_input("Search (Description / Item Code / Group / Brand)")
 
 def contains_word(text, query):
     if pd.isna(text):
         return False
     pattern = r"\b" + re.escape(query) + r"\b"
-    return re.search(pattern, str(text), flags=re.IGNORECASE) is not None
+    return re.search(pattern, str(text), re.IGNORECASE) is not None
 
 if search_query.strip():
-    query = search_query.strip()
+    q = search_query.strip()
 
-    filtered_df = df[
-        df[search_columns["Description"]].apply(lambda x: contains_word(x, query)
-            if search_columns["Description"] else False)
-        | df[search_columns["Item Code"]].astype(str).str.contains(query, case=False, na=False)
-        | df[search_columns["Group Name"]].astype(str).str.contains(query, case=False, na=False)
-        | df[search_columns["Brand"]].astype(str).str.contains(query, case=False, na=False)
+    df_filtered = df[
+        (df[description_col].apply(lambda x: contains_word(x, q)) if description_col else False)
+        | df[itemcode_col].astype(str).str.contains(q, case=False, na=False)
+        | df[group_col].astype(str).str.contains(q, case=False, na=False)
+        | df[brand_col].astype(str).str.contains(q, case=False, na=False)
     ]
 else:
-    filtered_df = df
+    df_filtered = df
 
 # ---------------------------------------------------------
-# DISPLAY RESULTS
+# Show Results
 # ---------------------------------------------------------
-if filtered_df.empty:
+if df_filtered.empty:
     st.warning("No matching records found.")
 else:
-    st.write(f"### 🔍 Results ({len(filtered_df)} rows)")
-    st.dataframe(filtered_df, use_container_width=True)
+    st.write(f"### 🔍 Results ({len(df_filtered)} rows)")
+    st.dataframe(df_filtered, use_container_width=True)
 
-    # Download Excel
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"inventory_search_{timestamp}.xlsx"
-
-    buffer = BytesIO()
-    with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
-        filtered_df.to_excel(writer, index=False, sheet_name="Results")
+    # Download
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df_filtered.to_excel(writer, index=False, sheet_name="Results")
 
     st.download_button(
-        label="📥 Download Search Result",
-        data=buffer.getvalue(),
-        file_name=filename,
+        label="📥 Download Results",
+        data=output.getvalue(),
+        file_name="filtered_inventory.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
