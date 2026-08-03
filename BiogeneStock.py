@@ -1,77 +1,89 @@
-
-import io, zipfile
-from copy import copy
+import io
 import streamlit as st
 from openpyxl import load_workbook, Workbook
 
-st.set_page_config(page_title="Excel Splitter",layout="wide")
-st.title("📄 Excel Workbook Splitter")
+st.set_page_config(page_title="Brand Wise Splitter", layout="centered")
 
-up=st.file_uploader("Upload workbook",type=["xlsx"])
-if up:
-    wb=load_workbook(up)
-    sheet=st.selectbox("Worksheet",wb.sheetnames)
-    ws=wb[sheet]
-    headers=[str(c.value).strip() if c.value else "" for c in ws[1]]
-    col=st.selectbox("Split Column",headers)
-    mode=st.radio("Mode",["Worksheets in one workbook","Separate Excel files"])
-    ignore=st.checkbox("Ignore blank values",True)
-    if st.button("Split"):
-        idx=headers.index(col)+1
-        prog=st.progress(0)
-        rows=list(ws.iter_rows(min_row=2))
-        total=max(1,len(rows))
-        def clean(v):
-            if v is None or str(v).strip()=="":
-                return None
-            n=str(v).strip()
+st.title("📄 Brand Wise Worksheet Splitter")
+
+uploaded_file = st.file_uploader(
+    "Upload Excel Workbook",
+    type=["xlsx"]
+)
+
+if uploaded_file:
+
+    wb = load_workbook(uploaded_file)
+    ws = wb.active
+
+    headers = [str(c.value).strip() if c.value else "" for c in ws[1]]
+
+    brand_col = None
+    for i, h in enumerate(headers):
+        if h.lower() == "brand":
+            brand_col = i + 1
+            break
+
+    if brand_col is None:
+        st.error("Brand column not found.")
+        st.stop()
+
+    st.success(f"Brand column found (Column {brand_col})")
+
+    if st.button("Split Workbook"):
+
+        out_wb = Workbook()
+        out_wb.remove(out_wb.active)
+
+        sheets = {}
+
+        # Header row
+        header = [c.value for c in ws[1]]
+
+        total_rows = ws.max_row - 1
+        progress = st.progress(0)
+
+        processed = 0
+
+        for row in ws.iter_rows(min_row=2, values_only=True):
+
+            processed += 1
+
+            if total_rows > 0 and processed % 100 == 0:
+                progress.progress(min(processed / total_rows, 1.0))
+
+            brand = row[brand_col - 1]
+
+            if brand is None or str(brand).strip() == "":
+                brand = "Blank"
+
+            brand = str(brand).strip()
+
+            # Remove invalid worksheet characters
             for ch in '\\/*[]:?':
-                n=n.replace(ch,'_')
-            return n[:31]
-        if mode.startswith("Worksheets"):
-            out=Workbook()
-            out.remove(out.active)
-            sheets={}
-            for i,row in enumerate(rows,1):
-                name=clean(row[idx-1].value)
-                if name is None:
-                    if ignore:
-                        prog.progress(i/total); continue
-                    name="Blank"
-                if name not in sheets:
-                    sh=out.create_sheet(name)
-                    sheets[name]=sh
-                    for c,h in enumerate(ws[1],1):
-                        sh.cell(1,c).value=h.value
-                sh=sheets[name]
-                nr=sh.max_row+1
-                for c,cell in enumerate(row,1):
-                    sh.cell(nr,c).value=cell.value
-                prog.progress(i/total)
-            bio=io.BytesIO(); out.save(bio); bio.seek(0)
-            st.success(f"Created {len(sheets)} worksheets")
-            st.download_button("Download Workbook",bio,"Split_Workbook.xlsx","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-        else:
-            groups={}
-            for i,row in enumerate(rows,1):
-                name=clean(row[idx-1].value)
-                if name is None:
-                    if ignore:
-                        prog.progress(i/total); continue
-                    name="Blank"
-                groups.setdefault(name,[]).append(row)
-                prog.progress(i/total)
-            zbio=io.BytesIO()
-            with zipfile.ZipFile(zbio,"w",zipfile.ZIP_DEFLATED) as z:
-                for name,grows in groups.items():
-                    ow=Workbook(); os=ow.active; os.title=name
-                    for c,h in enumerate(ws[1],1):
-                        os.cell(1,c).value=h.value
-                    for r,row in enumerate(grows,2):
-                        for c,cell in enumerate(row,1):
-                            os.cell(r,c).value=cell.value
-                    x=io.BytesIO(); ow.save(x)
-                    z.writestr(f"{name}.xlsx",x.getvalue())
-            zbio.seek(0)
-            st.success(f"Created {len(groups)} files")
-            st.download_button("Download ZIP",zbio,"Split_Files.zip","application/zip")
+                brand = brand.replace(ch, "_")
+
+            brand = brand[:31]
+
+            if brand not in sheets:
+
+                sh = out_wb.create_sheet(title=brand)
+                sheets[brand] = sh
+                sh.append(header)
+
+            sheets[brand].append(row)
+
+        progress.progress(1.0)
+
+        output = io.BytesIO()
+        out_wb.save(output)
+        output.seek(0)
+
+        st.success(f"Done! Created {len(sheets)} worksheets.")
+
+        st.download_button(
+            "⬇ Download Split Workbook",
+            data=output,
+            file_name="Brand_Wise_Workbook.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
