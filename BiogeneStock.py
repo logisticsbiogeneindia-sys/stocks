@@ -1,92 +1,80 @@
 import io
+import pandas as pd
 import streamlit as st
-from openpyxl import load_workbook, Workbook
 
 st.set_page_config(
-    page_title="Brand Splitter",
-    page_icon="📄"
+    page_title="Brand Wise Splitter",
+    page_icon="📄",
+    layout="centered"
 )
 
 st.title("📄 Brand Wise Worksheet Splitter")
+st.write("Upload an Excel file and split it into worksheets based on the **Brand** column.")
 
 uploaded_file = st.file_uploader(
-    "Select Excel Workbook",
-    type=["xlsx"]
+    "Choose Excel File",
+    type=["xlsx", "xls"]
 )
 
 if uploaded_file is not None:
 
-    with st.spinner("Reading workbook..."):
-        wb = load_workbook(uploaded_file, data_only=True)
+    with st.spinner("Reading Excel..."):
+        df = pd.read_excel(uploaded_file, dtype=object)
 
-    ws = wb.active
+    # Find Brand column (case-insensitive)
+    brand_col = None
+    for col in df.columns:
+        if str(col).strip().lower() == "brand":
+            brand_col = col
+            break
 
-    headers = [
-        str(c.value).strip() if c.value else ""
-        for c in ws[1]
-    ]
-
-    if "Brand" not in headers and "brand" not in [h.lower() for h in headers]:
-        st.error("Brand column not found.")
+    if brand_col is None:
+        st.error("❌ Brand column not found.")
         st.stop()
 
-    brand_col = next(
-        i for i, h in enumerate(headers)
-        if h.lower() == "brand"
-    )
+    st.success(f"✅ Found Brand column: {brand_col}")
 
-    st.success("Brand column detected.")
+    st.write(f"Rows : **{len(df):,}**")
+    st.write(f"Unique Brands : **{df[brand_col].fillna('Blank').nunique()}**")
 
     if st.button("Split Workbook"):
 
         progress = st.progress(0)
 
-        output = Workbook()
-        output.remove(output.active)
+        output = io.BytesIO()
 
-        sheets = {}
+        with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
 
-        header = [c.value for c in ws[1]]
+            groups = df.groupby(df[brand_col].fillna("Blank"), sort=True)
 
-        total = ws.max_row - 1
+            total = len(groups)
 
-        for r, row in enumerate(
-                ws.iter_rows(min_row=2, values_only=True),
-                start=1):
+            for i, (brand, data) in enumerate(groups, start=1):
 
-            brand = row[brand_col]
+                sheet_name = str(brand)
 
-            if brand is None or str(brand).strip() == "":
-                brand = "Blank"
+                for ch in ['\\', '/', '*', '[', ']', ':', '?']:
+                    sheet_name = sheet_name.replace(ch, "_")
 
-            name = str(brand).strip()
+                sheet_name = sheet_name[:31]
 
-            for ch in '\\/*[]:?':
-                name = name.replace(ch, "_")
+                data.to_excel(
+                    writer,
+                    sheet_name=sheet_name,
+                    index=False
+                )
 
-            name = name[:31]
+                progress.progress(i / total)
 
-            if name not in sheets:
-                sh = output.create_sheet(title=name)
-                sh.append(header)
-                sheets[name] = sh
-
-            sheets[name].append(row)
-
-            if r % 200 == 0 or r == total:
-                progress.progress(min(r / total, 1.0))
-
-        bio = io.BytesIO()
-        output.save(bio)
-        bio.seek(0)
+        output.seek(0)
 
         progress.empty()
 
-        st.success(f"Finished! {len(sheets)} worksheets created.")
+        st.success("✅ Workbook created successfully!")
 
         st.download_button(
-            "⬇ Download Workbook",
-            data=bio,
+            label="⬇ Download Workbook",
+            data=output,
             file_name="Brand_Wise_Workbook.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
