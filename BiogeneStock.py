@@ -2,88 +2,91 @@ import io
 import streamlit as st
 from openpyxl import load_workbook, Workbook
 
-st.set_page_config(page_title="Brand Wise Splitter", layout="centered")
+st.set_page_config(
+    page_title="Brand Splitter",
+    page_icon="📄"
+)
 
 st.title("📄 Brand Wise Worksheet Splitter")
 
 uploaded_file = st.file_uploader(
-    "Upload Excel Workbook",
+    "Select Excel Workbook",
     type=["xlsx"]
 )
 
-if uploaded_file:
+if uploaded_file is not None:
 
-    wb = load_workbook(uploaded_file)
+    with st.spinner("Reading workbook..."):
+        wb = load_workbook(uploaded_file, data_only=True)
+
     ws = wb.active
 
-    headers = [str(c.value).strip() if c.value else "" for c in ws[1]]
+    headers = [
+        str(c.value).strip() if c.value else ""
+        for c in ws[1]
+    ]
 
-    brand_col = None
-    for i, h in enumerate(headers):
-        if h.lower() == "brand":
-            brand_col = i + 1
-            break
-
-    if brand_col is None:
+    if "Brand" not in headers and "brand" not in [h.lower() for h in headers]:
         st.error("Brand column not found.")
         st.stop()
 
-    st.success(f"Brand column found (Column {brand_col})")
+    brand_col = next(
+        i for i, h in enumerate(headers)
+        if h.lower() == "brand"
+    )
+
+    st.success("Brand column detected.")
 
     if st.button("Split Workbook"):
 
-        out_wb = Workbook()
-        out_wb.remove(out_wb.active)
+        progress = st.progress(0)
+
+        output = Workbook()
+        output.remove(output.active)
 
         sheets = {}
 
-        # Header row
         header = [c.value for c in ws[1]]
 
-        total_rows = ws.max_row - 1
-        progress = st.progress(0)
+        total = ws.max_row - 1
 
-        processed = 0
+        for r, row in enumerate(
+                ws.iter_rows(min_row=2, values_only=True),
+                start=1):
 
-        for row in ws.iter_rows(min_row=2, values_only=True):
-
-            processed += 1
-
-            if total_rows > 0 and processed % 100 == 0:
-                progress.progress(min(processed / total_rows, 1.0))
-
-            brand = row[brand_col - 1]
+            brand = row[brand_col]
 
             if brand is None or str(brand).strip() == "":
                 brand = "Blank"
 
-            brand = str(brand).strip()
+            name = str(brand).strip()
 
-            # Remove invalid worksheet characters
             for ch in '\\/*[]:?':
-                brand = brand.replace(ch, "_")
+                name = name.replace(ch, "_")
 
-            brand = brand[:31]
+            name = name[:31]
 
-            if brand not in sheets:
-
-                sh = out_wb.create_sheet(title=brand)
-                sheets[brand] = sh
+            if name not in sheets:
+                sh = output.create_sheet(title=name)
                 sh.append(header)
+                sheets[name] = sh
 
-            sheets[brand].append(row)
+            sheets[name].append(row)
 
-        progress.progress(1.0)
+            if r % 200 == 0 or r == total:
+                progress.progress(min(r / total, 1.0))
 
-        output = io.BytesIO()
-        out_wb.save(output)
-        output.seek(0)
+        bio = io.BytesIO()
+        output.save(bio)
+        bio.seek(0)
 
-        st.success(f"Done! Created {len(sheets)} worksheets.")
+        progress.empty()
+
+        st.success(f"Finished! {len(sheets)} worksheets created.")
 
         st.download_button(
-            "⬇ Download Split Workbook",
-            data=output,
+            "⬇ Download Workbook",
+            data=bio,
             file_name="Brand_Wise_Workbook.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
