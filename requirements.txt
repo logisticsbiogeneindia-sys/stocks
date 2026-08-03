@@ -9,4 +9,4 @@ fuzzywuzzy
 bcrypt
 gdown
 plotly
-
+xlsxwriter 
