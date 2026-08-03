@@ -1,264 +1,112 @@
-import streamlit as st
-import pandas as pd
-import os
-import re
-from datetime import datetime
-import pytz
-import requests
-import base64
 import io
+from copy import copy
 
-# -------------------------
-# Helpers
-# -------------------------
-def normalize(s: str) -> str:
-    return re.sub(r'[^a-z0-9]', '', str(s).lower())
+import streamlit as st
+from openpyxl import load_workbook, Workbook
 
-def find_column(df: pd.DataFrame, candidates: list) -> str | None:
-    norm_map = {normalize(col): col for col in df.columns}
-    for cand in candidates:
-        key = normalize(cand)
-        if key in norm_map:
-            return norm_map[key]
-    for cand in candidates:
-        key = normalize(cand)
-        for norm_col, orig in norm_map.items():
-            if key in norm_col or norm_col in key:
-                return orig
-    return None
+st.set_page_config(page_title="Excel Workbook Splitter", layout="wide")
 
-# -------------------------
-# Config & Styling
-# -------------------------
-st.set_page_config(page_title="Biogene India - Inventory Viewer", layout="wide")
-st.markdown("""
-<style>
-body {background-color: #f8f9fa; font-family: "Helvetica Neue", sans-serif;}
-.navbar { display: flex; align-items: center; background-color: #004a99; padding: 8px 16px; border-radius: 8px; color: white; position: sticky; top: 0; z-index: 1000; }
-.navbar img { height: 50px; margin-right: 15px; }
-.navbar h1 { font-size: 24px; margin: 0; font-weight: 700; }
-.footer { position: fixed; left: 0; bottom: 0; width: 100%; background-color: #004a99; color: white; text-align: center; padding: 8px; font-size: 14px; }
-</style>
-""", unsafe_allow_html=True)
+st.title("📄 Excel Workbook Splitter")
+st.write("Split a workbook into multiple worksheets based on any column.")
 
-# -------------------------
-# Logo + Title Navbar
-# -------------------------
-logo_path = "logonew.png"
-if os.path.exists(logo_path):
-    logo_html = f'<img src="data:image/png;base64,{base64.b64encode(open(logo_path,"rb").read()).decode()}" alt="Logo">'
-else:
-    logo_html = ""
+uploaded_file = st.file_uploader(
+    "Upload Excel Workbook",
+    type=["xlsx"]
+)
 
-st.markdown(f"""
-<div class="navbar">
-    {logo_html}
-    <h1>📦 Biogene India - Inventory Viewer</h1>
-</div>
-""", unsafe_allow_html=True)
+if uploaded_file:
 
-# -------------------------
-# Sidebar
-# -------------------------
-st.sidebar.header("⚙️ Settings")
-password = st.sidebar.text_input("Enter Password to Upload/Download File", type="password")
-correct_password = st.secrets["PASSWORD"]
+    wb = load_workbook(uploaded_file)
+    ws = wb.active
 
-UPLOAD_PATH = "Master-Stock Sheet Original.xlsx"
-TIMESTAMP_PATH = "timestamp.txt"
-FILENAME_PATH = "uploaded_filename.txt"
+    headers = []
 
-def save_timestamp(timestamp):
-    with open(TIMESTAMP_PATH, "w") as f:
-        f.write(timestamp)
+    for cell in ws[1]:
+        headers.append("" if cell.value is None else str(cell.value).strip())
 
-def save_uploaded_filename(filename):
-    with open(FILENAME_PATH, "w") as f:
-        f.write(filename)
-
-def load_uploaded_filename():
-    if os.path.exists(FILENAME_PATH):
-        with open(FILENAME_PATH, "r") as f:
-            return f.read().strip()
-    return "uploaded_inventory.xlsx"
-
-# -------------------------
-# GitHub Config
-# -------------------------
-OWNER = "logisticsbiogeneindia-sys"
-REPO = "Biogeneindia"
-BRANCH = "main"
-TOKEN = st.secrets["GITHUB_TOKEN"]
-headers = {"Authorization": f"Bearer {TOKEN}", "Accept": "application/vnd.github+json"}
-
-def check_github_auth():
-    r = requests.get("https://api.github.com/user", headers=headers)
-    if r.status_code == 200:
-        st.sidebar.success(f"🔑 GitHub Auth OK: {r.json().get('login')}")
-    else:
-        st.sidebar.error(f"❌ GitHub Auth failed: {r.status_code}")
-
-check_github_auth()
-
-# -------------------------
-# GitHub Push Function
-# -------------------------
-def push_to_github(local_file, remote_path, commit_message="Update file"):
-    try:
-        with open(local_file, "rb") as f:
-            content = base64.b64encode(f.read()).decode("utf-8")
-        url = f"https://api.github.com/repos/{OWNER}/{REPO}/contents/{remote_path}"
-        r = requests.get(url, headers=headers)
-        sha = r.json().get("sha") if r.status_code == 200 else None
-        payload = {"message": commit_message, "content": content, "branch": BRANCH}
-        if sha:
-            payload["sha"] = sha
-        r = requests.put(url, headers=headers, json=payload)
-        if r.status_code in [200, 201]:
-            st.sidebar.success(f"✅ {os.path.basename(local_file)} pushed to GitHub successfully!")
-        else:
-            st.sidebar.error(f"❌ GitHub push failed for {local_file}: {r.json()}")
-    except Exception as e:
-        st.sidebar.error(f"Error pushing file {local_file}: {e}")
-
-# -------------------------
-# GitHub Timestamp
-# -------------------------
-def get_github_file_timestamp():
-    try:
-        url = f"https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/timestamp.txt"
-        r = requests.get(url)
-        if r.status_code == 200:
-            return r.text.strip()
-        else:
-            return "No GitHub timestamp found."
-    except Exception as e:
-        return f"Error fetching timestamp: {e}"
-
-github_timestamp = get_github_file_timestamp()
-st.markdown(f"🕒 **Last Updated (from GitHub):** {github_timestamp}")
-
-# -------------------------
-# Upload & Download Section
-# -------------------------
-if password == correct_password:
-    uploaded_file = st.sidebar.file_uploader("Upload Excel File", type=["xlsx", "xls"])
-
-    if uploaded_file is not None:
-        with st.spinner("Uploading file..."):
-            with open(UPLOAD_PATH, "wb") as f:
-                f.write(uploaded_file.getbuffer())
-
-            timezone = pytz.timezone("Asia/Kolkata")
-            upload_time = datetime.now(timezone).strftime("%d-%m-%Y %H:%M:%S")
-            save_timestamp(upload_time)
-            save_uploaded_filename(uploaded_file.name)
-
-            st.sidebar.success(f"✅ File uploaded at {upload_time}")
-            push_to_github(UPLOAD_PATH, "Master-Stock Sheet Original.xlsx", commit_message=f"Uploaded {uploaded_file.name}")
-            push_to_github(TIMESTAMP_PATH, "timestamp.txt", commit_message="Updated timestamp")
-
-    if os.path.exists(UPLOAD_PATH):
-        with open(UPLOAD_PATH, "rb") as f:
-            st.sidebar.download_button(
-                label="⬇️ Download Uploaded Excel File",
-                data=f,
-                file_name=load_uploaded_filename(),
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-else:
-    if password:
-        st.sidebar.error("❌ Incorrect password!")
-
-# -------------------------
-# Load Excel
-# -------------------------
-@st.cache_data
-def load_data_from_github():
-    url = f"https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/{UPLOAD_PATH.replace(' ', '%20')}"
-    r = requests.get(url)
-    return pd.ExcelFile(io.BytesIO(r.content))
-
-if not os.path.exists(UPLOAD_PATH):
-    try:
-        xl = load_data_from_github()
-    except Exception as e:
-        st.error(f"❌ Error loading Excel from GitHub: {e}")
+    if not headers:
+        st.error("No headers found.")
         st.stop()
-else:
-    xl = pd.ExcelFile(UPLOAD_PATH)
 
-# -------------------------
-# Load MasterSheet only
-# -------------------------
-sheet_name = "MasterSheet"
-if sheet_name not in xl.sheet_names:
-    st.error(f"❌ Sheet '{sheet_name}' not found in Excel.")
-    st.stop()
+    split_column = st.selectbox(
+        "Select column to split by",
+        headers
+    )
 
-df = xl.parse(sheet_name)
-st.success(f"✅ Sheet '{sheet_name}' Loaded Successfully!")
+    if st.button("Split Workbook"):
 
-# -------------------------
-# Default BalanceQty > 0 filter
-# -------------------------
-balance_col = find_column(df, ["BalanceQty", "Balance Qty", "Qty", "Balance"])
-if balance_col:
-    default_filter = st.sidebar.checkbox("Show only BalanceQty > 0", value=True)
-    if default_filter:
-        df = df[df[balance_col] > 0]
-else:
-    st.sidebar.warning("⚠ 'BalanceQty' column not found. Filter not applied.")
+        split_col = headers.index(split_column) + 1
 
-# -------------------------
-# Tabs for Local/Outstation/Other/Unknown
-# -------------------------
-check_col = find_column(df, ["Check", "Location", "Status", "Type", "StockType"])
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["🏠 Local", "🚚 Outstation", "📦 Other","❓ Unknown", "🔍 Search"])
+        new_wb = Workbook()
+        new_wb.remove(new_wb.active)
 
-if check_col:
-    check_vals = df[check_col].astype(str).str.strip().str.lower()
-    with tab1:
-        st.subheader("🏠 Local Inventory")
-        st.dataframe(df[check_vals == "local"], use_container_width=True, height=600)
-    with tab2:
-        st.subheader("🚚 Outstation Inventory")
-        st.dataframe(df[check_vals == "outstation"], use_container_width=True, height=600)
-    with tab3:
-        st.subheader("📦 Other Inventory")
-        st.dataframe(df[~check_vals.isin(["local", "outstation","unknown"])], use_container_width=True, height=600)
-    with tab4:
-        st.subheader("❓ Unknown")
-        st.dataframe(df[check_vals == "unknown"], use_container_width=True, height=600)
-else:
-    for tab in [tab1, tab2]:
-        st.warning("There is no 'Check' column found in the data.")
+        sheets = {}
 
-# -------------------------
-# Search Tab
-# -------------------------
-with tab5:
-    st.subheader("🔍 Search Inventory")
-    search_text = st.text_input("Search Item Code / Description / Brand / Customer")
-    df_filtered = df.copy()
-    if search_text.strip():
-        keyword = search_text.lower()
-        df_filtered = df_filtered[
-            df_filtered.astype(str).apply(lambda row: row.str.lower().str.contains(keyword).any(), axis=1)
-        ]
+        header = list(ws[1])
 
-    if df_filtered.empty:
-        st.warning("No matching records found.")
-    else:
-        st.dataframe(df_filtered, use_container_width=True, height=600)
+        for row in ws.iter_rows(min_row=2):
 
-# -------------------------
-# Footer
-# -------------------------
-st.markdown("""
-<div class="footer">
-    © 2025 Biogene India | Created By Mohit Sharma
-</div>
-""", unsafe_allow_html=True)
+            value = row[split_col - 1].value
 
+            if value is None or str(value).strip() == "":
+                sheet_name = "Blank"
+            else:
+                sheet_name = str(value).strip()
 
+            for ch in ['\\', '/', '*', '[', ']', ':', '?']:
+                sheet_name = sheet_name.replace(ch, "_")
+
+            sheet_name = sheet_name[:31]
+
+            if sheet_name not in sheets:
+
+                sh = new_wb.create_sheet(sheet_name)
+                sheets[sheet_name] = sh
+
+                # Copy Header
+                for c, cell in enumerate(header, start=1):
+
+                    n = sh.cell(row=1, column=c)
+                    n.value = cell.value
+
+                    if cell.has_style:
+                        n.font = copy(cell.font)
+                        n.fill = copy(cell.fill)
+                        n.border = copy(cell.border)
+                        n.alignment = copy(cell.alignment)
+                        n.number_format = cell.number_format
+                        n.protection = copy(cell.protection)
+
+            sh = sheets[sheet_name]
+            new_row = sh.max_row + 1
+
+            for c, cell in enumerate(row, start=1):
+
+                n = sh.cell(row=new_row, column=c)
+                n.value = cell.value
+
+                if cell.has_style:
+                    n.font = copy(cell.font)
+                    n.fill = copy(cell.fill)
+                    n.border = copy(cell.border)
+                    n.alignment = copy(cell.alignment)
+                    n.number_format = cell.number_format
+                    n.protection = copy(cell.protection)
+
+        # Copy column widths
+        for sh in new_wb.worksheets:
+            for col, dim in ws.column_dimensions.items():
+                sh.column_dimensions[col].width = dim.width
+
+        output = io.BytesIO()
+        new_wb.save(output)
+        output.seek(0)
+
+        st.success(f"Created {len(sheets)} worksheets.")
+
+        st.download_button(
+            "⬇ Download Split Workbook",
+            data=output,
+            file_name="Split_Workbook.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
