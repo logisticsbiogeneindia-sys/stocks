@@ -1,6 +1,6 @@
 import io
 import os
-import re
+import time
 import base64
 import zipfile
 import requests
@@ -8,673 +8,813 @@ import pandas as pd
 import streamlit as st
 
 
-# ============================================================
-# CONFIG
-# ============================================================
+# =========================================================
+# PAGE CONFIG
+# =========================================================
 
 st.set_page_config(
-    page_title="Biogene India Tools",
-    page_icon="🛠️",
-    layout="centered"
+    page_title="Biogene India ERP Tools",
+    page_icon="🏢",
+    layout="wide"
 )
 
 
-# ============================================================
-# FUNCTIONS
-# ============================================================
+# =========================================================
+# GITHUB SETTINGS FROM STREAMLIT SECRETS
+# =========================================================
 
-def safe_sheet_name(name):
-    name = str(name)
+GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", "")
+GITHUB_OWNER = st.secrets.get("GITHUB_OWNER", "")
+GITHUB_REPO = st.secrets.get("GITHUB_REPO", "")
 
-    for ch in ['\\', '/', '*', '[', ']', ':', '?']:
-        name = name.replace(ch, "_")
-
-    name = name.strip()
-
-    if not name:
-        name = "Blank"
-
-    return name[:31]
+GITHUB_API = "https://api.github.com"
 
 
-def safe_filename(name):
-    name = str(name).strip()
+# =========================================================
+# HEADER
+# =========================================================
 
-    name = re.sub(
-        r'[<>:"/\\|?*]',
-        "_",
-        name
-    )
-
-    if not name:
-        name = "Biogene_India_ERP"
-
-    return name
+st.title("🏢 Biogene India ERP Tools")
+st.caption("SAP Business One Style ERP Utilities")
 
 
-def github_headers(token):
-    return {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28"
-    }
-
-
-# ============================================================
+# =========================================================
 # SIDEBAR
-# ============================================================
+# =========================================================
 
-st.sidebar.title("🛠️ Biogene India Tools")
+with st.sidebar:
 
-tool = st.sidebar.radio(
-    "Select Tool",
-    [
-        "📄 Brand Wise Excel Splitter",
-        "🛠️ ZIP → EXE Builder"
-    ]
-)
+    st.header("⚙️ Tools")
 
-
-# ============================================================
-# EXCEL SPLITTER
-# ============================================================
-
-if tool == "📄 Brand Wise Excel Splitter":
-
-    st.title(
-        "📄 Brand Wise Worksheet Splitter"
+    tool = st.radio(
+        "Select Tool",
+        [
+            "📊 Brand Wise Excel Splitter",
+            "📦 ZIP → Windows EXE Builder"
+        ]
     )
+
+    st.divider()
+
+    st.info(
+        "GitHub configuration is loaded automatically "
+        "from Streamlit Secrets."
+    )
+
+
+# =========================================================
+# TOOL 1
+# BRAND WISE EXCEL SPLITTER
+# =========================================================
+
+if tool == "📊 Brand Wise Excel Splitter":
+
+    st.header("📊 Brand Wise Worksheet Splitter")
 
     st.write(
-        "Upload an Excel file and split it into "
+        "Upload an Excel file and split it into separate "
         "worksheets based on the **Brand** column."
     )
 
     uploaded_file = st.file_uploader(
         "Choose Excel File",
-        type=["xlsx", "xls"]
+        type=["xlsx", "xls"],
+        key="excel_upload"
     )
 
     if uploaded_file is not None:
 
         try:
 
-            with st.spinner(
-                "Reading Excel..."
-            ):
+            with st.spinner("Reading Excel..."):
 
                 df = pd.read_excel(
                     uploaded_file,
                     dtype=object
                 )
 
+            # -------------------------------------------------
+            # FIND BRAND COLUMN
+            # -------------------------------------------------
+
+            brand_col = None
+
+            for col in df.columns:
+
+                if str(col).strip().lower() == "brand":
+
+                    brand_col = col
+                    break
+
+            if brand_col is None:
+
+                st.error(
+                    "❌ Brand column not found."
+                )
+
+                st.stop()
+
+            # -------------------------------------------------
+            # INFORMATION
+            # -------------------------------------------------
+
+            st.success(
+                f"✅ Brand column found: **{brand_col}**"
+            )
+
+            col1, col2, col3 = st.columns(3)
+
+            with col1:
+                st.metric(
+                    "Total Rows",
+                    f"{len(df):,}"
+                )
+
+            with col2:
+                unique_brands = (
+                    df[brand_col]
+                    .fillna("Blank")
+                    .nunique()
+                )
+
+                st.metric(
+                    "Unique Brands",
+                    unique_brands
+                )
+
+            with col3:
+
+                blank_count = (
+                    df[brand_col]
+                    .isna()
+                    .sum()
+                )
+
+                st.metric(
+                    "Blank Brand Rows",
+                    blank_count
+                )
+
+            # -------------------------------------------------
+            # PREVIEW
+            # -------------------------------------------------
+
+            st.subheader("Preview")
+
+            st.dataframe(
+                df.head(20),
+                use_container_width=True
+            )
+
+            # -------------------------------------------------
+            # SPLIT
+            # -------------------------------------------------
+
+            if st.button(
+                "🚀 Split Workbook",
+                type="primary",
+                use_container_width=True
+            ):
+
+                progress = st.progress(0)
+
+                status = st.empty()
+
+                output = io.BytesIO()
+
+                with pd.ExcelWriter(
+                    output,
+                    engine="xlsxwriter"
+                ) as writer:
+
+                    groups = df.groupby(
+                        df[brand_col].fillna("Blank"),
+                        sort=True
+                    )
+
+                    total = len(groups)
+
+                    used_sheet_names = set()
+
+                    for i, (brand, data) in enumerate(
+                        groups,
+                        start=1
+                    ):
+
+                        sheet_name = str(brand)
+
+                        # Excel invalid characters
+                        invalid_chars = [
+                            "\\",
+                            "/",
+                            "*",
+                            "[",
+                            "]",
+                            ":",
+                            "?"
+                        ]
+
+                        for ch in invalid_chars:
+
+                            sheet_name = (
+                                sheet_name.replace(
+                                    ch,
+                                    "_"
+                                )
+                            )
+
+                        sheet_name = sheet_name.strip()
+
+                        if not sheet_name:
+                            sheet_name = "Blank"
+
+                        sheet_name = sheet_name[:31]
+
+                        # Avoid duplicate sheet names
+                        original_name = sheet_name
+
+                        counter = 1
+
+                        while sheet_name in used_sheet_names:
+
+                            suffix = f"_{counter}"
+
+                            sheet_name = (
+                                original_name[
+                                    :31-len(suffix)
+                                ]
+                                + suffix
+                            )
+
+                            counter += 1
+
+                        used_sheet_names.add(
+                            sheet_name
+                        )
+
+                        data.to_excel(
+                            writer,
+                            sheet_name=sheet_name,
+                            index=False
+                        )
+
+                        progress.progress(
+                            i / total
+                        )
+
+                        status.write(
+                            f"Creating sheet: "
+                            f"**{sheet_name}** "
+                            f"({i}/{total})"
+                        )
+
+                output.seek(0)
+
+                progress.empty()
+                status.empty()
+
+                st.success(
+                    "✅ Workbook created successfully!"
+                )
+
+                st.download_button(
+                    label="⬇️ Download Brand Wise Workbook",
+                    data=output,
+                    file_name="Brand_Wise_Workbook.xlsx",
+                    mime=(
+                        "application/vnd.openxmlformats-"
+                        "officedocument.spreadsheetml.sheet"
+                    ),
+                    use_container_width=True
+                )
+
         except Exception as e:
 
             st.error(
-                f"❌ Excel read error: {e}"
-            )
-
-            st.stop()
-
-        # Find Brand column
-        brand_col = None
-
-        for col in df.columns:
-
-            if (
-                str(col)
-                .strip()
-                .lower()
-                == "brand"
-            ):
-                brand_col = col
-                break
-
-        if brand_col is None:
-
-            st.error(
-                "❌ Brand column not found."
-            )
-
-            st.stop()
-
-        st.success(
-            f"✅ Found Brand column: {brand_col}"
-        )
-
-        st.write(
-            f"Rows : **{len(df):,}**"
-        )
-
-        st.write(
-            f"Unique Brands : **"
-            f"{df[brand_col].fillna('Blank').nunique():,}"
-            f"**"
-        )
-
-        if st.button(
-            "Split Workbook",
-            type="primary"
-        ):
-
-            progress = st.progress(0)
-
-            output = io.BytesIO()
-
-            with pd.ExcelWriter(
-                output,
-                engine="xlsxwriter"
-            ) as writer:
-
-                groups = df.groupby(
-                    df[brand_col].fillna("Blank"),
-                    sort=True
-                )
-
-                total = len(groups)
-
-                used_sheet_names = set()
-
-                for i, (brand, data) in enumerate(
-                    groups,
-                    start=1
-                ):
-
-                    sheet_name = safe_sheet_name(
-                        brand
-                    )
-
-                    # Avoid duplicate sheet names
-                    original_name = sheet_name
-                    counter = 1
-
-                    while sheet_name in used_sheet_names:
-
-                        suffix = f"_{counter}"
-
-                        sheet_name = (
-                            original_name[:31 - len(suffix)]
-                            + suffix
-                        )
-
-                        counter += 1
-
-                    used_sheet_names.add(
-                        sheet_name
-                    )
-
-                    data.to_excel(
-                        writer,
-                        sheet_name=sheet_name,
-                        index=False
-                    )
-
-                    progress.progress(
-                        i / total
-                    )
-
-            output.seek(0)
-
-            progress.empty()
-
-            st.success(
-                "✅ Workbook created successfully!"
-            )
-
-            st.download_button(
-                label="⬇ Download Workbook",
-                data=output,
-                file_name="Brand_Wise_Workbook.xlsx",
-                mime=(
-                    "application/"
-                    "vnd.openxmlformats-officedocument."
-                    "spreadsheetml.sheet"
-                )
+                f"❌ Error: {str(e)}"
             )
 
 
-# ============================================================
-# ZIP → EXE
-# ============================================================
+# =========================================================
+# TOOL 2
+# ZIP → WINDOWS EXE
+# =========================================================
 
-else:
+elif tool == "📦 ZIP → Windows EXE Builder":
 
-    st.title(
-        "🛠️ Biogene India ZIP → EXE Builder"
-    )
+    st.header("📦 ZIP → Windows Portable EXE Builder")
 
     st.write(
-        "Upload your Biogene India ERP ZIP and "
-        "create a Windows Portable EXE."
+        "Upload your Biogene India ERP project ZIP. "
+        "The project will be sent to a Windows GitHub Actions "
+        "runner to build a portable EXE."
     )
 
-    st.info(
-        "💡 EXE Windows build machine par automatically "
-        "banega. Aapko apne PC par Node.js install "
-        "karne ki zarurat nahi hai."
+    # -----------------------------------------------------
+    # CHECK SECRETS
+    # -----------------------------------------------------
+
+    missing = []
+
+    if not GITHUB_TOKEN:
+        missing.append("GITHUB_TOKEN")
+
+    if not GITHUB_OWNER:
+        missing.append("GITHUB_OWNER")
+
+    if not GITHUB_REPO:
+        missing.append("GITHUB_REPO")
+
+    if missing:
+
+        st.error(
+            "❌ Streamlit Secrets incomplete."
+        )
+
+        st.warning(
+            "Missing: " + ", ".join(missing)
+        )
+
+        st.code(
+            '''GITHUB_TOKEN = "github_pat_xxxxxxxxx"
+GITHUB_OWNER = "your-github-username"
+GITHUB_REPO = "your-build-repository"''',
+            language="toml"
+        )
+
+        st.stop()
+
+    st.success(
+        f"✅ GitHub connected: "
+        f"{GITHUB_OWNER}/{GITHUB_REPO}"
     )
 
-    # --------------------------------------------------------
-    # GitHub Settings
-    # --------------------------------------------------------
-
-    with st.expander(
-        "⚙️ Build Configuration",
-        expanded=True
-    ):
-
-        github_token = st.text_input(
-            "GitHub Personal Access Token",
-            type="password",
-            help=(
-                "GitHub Actions ko build start karne ke "
-                "liye token required hai."
-            )
-        )
-
-        github_owner = st.text_input(
-            "GitHub Username / Organization",
-            value=""
-        )
-
-        github_repo = st.text_input(
-            "GitHub Repository",
-            value=""
-        )
-
-        exe_name = st.text_input(
-            "EXE Name",
-            value="Biogene_India_ERP"
-        )
+    # -----------------------------------------------------
+    # ZIP UPLOAD
+    # -----------------------------------------------------
 
     zip_file = st.file_uploader(
-        "Upload Biogene India ZIP",
+        "Upload ERP ZIP File",
         type=["zip"],
-        key="biogene_zip"
+        key="erp_zip"
     )
+
+    exe_name = st.text_input(
+        "EXE Name",
+        value="Biogene-India-ERP",
+        help="Name of the generated Windows EXE"
+    )
+
+    # -----------------------------------------------------
+    # BUILD BUTTON
+    # -----------------------------------------------------
 
     if zip_file is not None:
 
-        st.success(
-            f"✅ ZIP selected: {zip_file.name}"
+        zip_size_mb = (
+            len(zip_file.getvalue())
+            / (1024 * 1024)
         )
 
-        st.write(
-            f"File size: "
-            f"{zip_file.size / (1024 * 1024):.2f} MB"
+        st.info(
+            f"ZIP Size: **{zip_size_mb:.2f} MB**"
         )
 
-        build_button = st.button(
+        if zip_size_mb > 20:
+
+            st.warning(
+                "⚠️ ZIP is larger than 20 MB. "
+                "The current transfer method may not be "
+                "suitable for very large projects."
+            )
+
+        if st.button(
             "🚀 Build Windows Portable EXE",
-            type="primary"
-        )
+            type="primary",
+            use_container_width=True
+        ):
 
-        if build_button:
+            # -------------------------------------------------
+            # READ ZIP
+            # -------------------------------------------------
 
-            if not github_token:
-                st.error(
-                    "❌ GitHub Token enter karo."
-                )
-                st.stop()
+            zip_bytes = zip_file.getvalue()
 
-            if not github_owner:
-                st.error(
-                    "❌ GitHub Username/Organization enter karo."
-                )
-                st.stop()
+            # -------------------------------------------------
+            # BASE64
+            # -------------------------------------------------
 
-            if not github_repo:
-                st.error(
-                    "❌ GitHub Repository enter karo."
-                )
-                st.stop()
+            encoded_zip = base64.b64encode(
+                zip_bytes
+            ).decode("utf-8")
 
-            exe_name = safe_filename(
-                exe_name
-            )
-
-            # ------------------------------------------------
-            # GitHub API
-            # ------------------------------------------------
-
-            api_base = (
-                "https://api.github.com/repos/"
-                f"{github_owner}/{github_repo}"
-            )
-
-            headers = github_headers(
-                github_token
-            )
-
-            # ------------------------------------------------
-            # Check repository
-            # ------------------------------------------------
-
-            with st.spinner(
-                "Checking GitHub repository..."
-            ):
-
-                response = requests.get(
-                    api_base,
-                    headers=headers,
-                    timeout=30
-                )
-
-            if response.status_code != 200:
-
-                st.error(
-                    "❌ GitHub repository access failed."
-                )
-
-                st.code(
-                    response.text
-                )
-
-                st.stop()
-
-            st.success(
-                "✅ GitHub repository connected."
-            )
-
-            # ------------------------------------------------
-            # Convert ZIP to Base64
-            # ------------------------------------------------
-
-            with st.spinner(
-                "Preparing ZIP..."
-            ):
-
-                zip_bytes = (
-                    zip_file.getvalue()
-                )
-
-                encoded_zip = (
-                    base64.b64encode(
-                        zip_bytes
-                    )
-                    .decode("utf-8")
-                )
-
-            # ------------------------------------------------
-            # Create unique build ID
-            # ------------------------------------------------
-
-            import time
+            # -------------------------------------------------
+            # BUILD ID
+            # -------------------------------------------------
 
             build_id = str(
                 int(time.time())
             )
 
+            # -------------------------------------------------
+            # GITHUB API HEADERS
+            # -------------------------------------------------
+
+            headers = {
+                "Authorization":
+                    f"Bearer {GITHUB_TOKEN}",
+
+                "Accept":
+                    "application/vnd.github+json",
+
+                "X-GitHub-Api-Version":
+                    "2022-11-28"
+            }
+
+            # -------------------------------------------------
+            # DISPATCH WORKFLOW
+            # -------------------------------------------------
+
+            dispatch_url = (
+                f"{GITHUB_API}/repos/"
+                f"{GITHUB_OWNER}/"
+                f"{GITHUB_REPO}/dispatches"
+            )
+
             payload = {
-                "event_type": "biogene-build",
+
+                "event_type":
+                    "biogene-build",
+
                 "client_payload": {
-                    "zip_base64": encoded_zip,
-                    "exe_name": exe_name,
-                    "build_id": build_id
+
+                    "zip_base64":
+                        encoded_zip,
+
+                    "exe_name":
+                        exe_name,
+
+                    "build_id":
+                        build_id
                 }
             }
 
-            # ------------------------------------------------
-            # Trigger GitHub Actions
-            # ------------------------------------------------
+            st.write("### 1️⃣ Sending project to Windows Builder...")
 
-            st.info(
-                "🚀 Windows EXE build start ho raha hai..."
-            )
+            try:
 
-            dispatch_url = (
-                api_base
-                + "/dispatches"
-            )
-
-            response = requests.post(
-                dispatch_url,
-                headers=headers,
-                json=payload,
-                timeout=60
-            )
-
-            if response.status_code not in [
-                200,
-                201,
-                204
-            ]:
-
-                st.error(
-                    "❌ Build trigger nahi hua."
+                response = requests.post(
+                    dispatch_url,
+                    headers=headers,
+                    json=payload,
+                    timeout=120
                 )
 
-                st.code(
-                    response.text
+                if response.status_code not in [200, 201, 204]:
+
+                    st.error(
+                        "❌ GitHub build trigger failed."
+                    )
+
+                    st.code(
+                        response.text
+                    )
+
+                    st.stop()
+
+                st.success(
+                    "✅ Windows build started."
+                )
+
+            except Exception as e:
+
+                st.error(
+                    f"❌ GitHub connection error: {e}"
                 )
 
                 st.stop()
 
-            st.success(
-                "✅ Build request successfully sent!"
-            )
-
-            st.session_state[
-                "build_id"
-            ] = build_id
-
-            st.session_state[
-                "building"
-            ] = True
-
-            st.session_state[
-                "github_owner"
-            ] = github_owner
-
-            st.session_state[
-                "github_repo"
-            ] = github_repo
-
-            st.session_state[
-                "github_token"
-            ] = github_token
-
-            st.rerun()
-
-
-# ============================================================
-# BUILD STATUS
-# ============================================================
-
-if (
-    st.session_state.get(
-        "building",
-        False
-    )
-):
-
-    st.divider()
-
-    st.subheader(
-        "🔄 Build Status"
-    )
-
-    token = st.session_state.get(
-        "github_token"
-    )
-
-    owner = st.session_state.get(
-        "github_owner"
-    )
-
-    repo = st.session_state.get(
-        "github_repo"
-    )
-
-    api_base = (
-        "https://api.github.com/repos/"
-        f"{owner}/{repo}"
-    )
-
-    headers = github_headers(
-        token
-    )
-
-    # Get latest workflow runs
-    runs_url = (
-        api_base
-        + "/actions/runs"
-        "?per_page=10"
-    )
-
-    response = requests.get(
-        runs_url,
-        headers=headers,
-        timeout=30
-    )
-
-    if response.status_code == 200:
-
-        runs = response.json().get(
-            "workflow_runs",
-            []
-        )
-
-        if runs:
-
-            latest = runs[0]
-
-            status = latest.get(
-                "status"
-            )
-
-            conclusion = latest.get(
-                "conclusion"
-            )
+            # -------------------------------------------------
+            # WAIT FOR ACTION
+            # -------------------------------------------------
 
             st.write(
-                f"**Status:** `{status}`"
+                "### 2️⃣ Building Windows EXE..."
             )
 
-            if status == "completed":
+            progress = st.progress(0)
 
-                if conclusion == "success":
+            status = st.empty()
 
-                    st.success(
-                        "🎉 EXE build successfully completed!"
+            found_run = None
+
+            max_attempts = 60
+
+            for attempt in range(
+                max_attempts
+            ):
+
+                try:
+
+                    runs_url = (
+                        f"{GITHUB_API}/repos/"
+                        f"{GITHUB_OWNER}/"
+                        f"{GITHUB_REPO}/"
+                        f"actions/runs"
                     )
 
-                    # ----------------------------------------
-                    # Download artifacts
-                    # ----------------------------------------
+                    params = {
+                        "per_page": 10
+                    }
 
-                    run_id = latest.get(
-                        "id"
-                    )
-
-                    artifact_url = (
-                        api_base
-                        + f"/actions/runs/"
-                        f"{run_id}/artifacts"
-                    )
-
-                    artifact_response = (
-                        requests.get(
-                            artifact_url,
-                            headers=headers,
-                            timeout=30
-                        )
+                    runs_response = requests.get(
+                        runs_url,
+                        headers=headers,
+                        params=params,
+                        timeout=30
                     )
 
                     if (
-                        artifact_response.status_code
+                        runs_response.status_code
                         == 200
                     ):
 
-                        artifacts = (
-                            artifact_response
+                        runs = (
+                            runs_response
                             .json()
                             .get(
-                                "artifacts",
+                                "workflow_runs",
                                 []
                             )
                         )
 
-                        if artifacts:
+                        for run in runs:
 
-                            artifact = (
-                                artifacts[0]
-                            )
-
-                            download_url = (
-                                artifact.get(
-                                    "archive_download_url"
-                                )
-                            )
-
-                            download_response = (
-                                requests.get(
-                                    download_url,
-                                    headers=headers,
-                                    timeout=120
+                            created_at = (
+                                run.get(
+                                    "created_at",
+                                    ""
                                 )
                             )
 
                             if (
-                                download_response.status_code
-                                == 200
+                                build_id
+                                in str(
+                                    run.get(
+                                        "display_title",
+                                        ""
+                                    )
+                                )
                             ):
 
-                                st.download_button(
-                                    label=(
-                                        "⬇️ Download "
-                                        "Biogene India EXE"
-                                    ),
-                                    data=(
-                                        download_response
-                                        .content
-                                    ),
-                                    file_name=(
-                                        "Biogene_India_EXE.zip"
-                                    ),
-                                    mime=(
-                                        "application/zip"
+                                found_run = run
+                                break
+
+                        # Fallback: newest run
+                        if found_run is None and runs:
+
+                            latest = runs[0]
+
+                            created = (
+                                latest.get(
+                                    "created_at",
+                                    ""
+                                )
+                            )
+
+                            found_run = latest
+
+                    if found_run:
+
+                        run_status = (
+                            found_run.get(
+                                "status"
+                            )
+                        )
+
+                        conclusion = (
+                            found_run.get(
+                                "conclusion"
+                            )
+                        )
+
+                        progress_value = min(
+                            0.95,
+                            0.05
+                            + (
+                                attempt
+                                / max_attempts
+                            ) * 0.90
+                        )
+
+                        progress.progress(
+                            progress_value
+                        )
+
+                        status.write(
+                            f"Build Status: "
+                            f"**{run_status}**"
+                        )
+
+                        if (
+                            run_status
+                            == "completed"
+                        ):
+
+                            if conclusion == "success":
+
+                                break
+
+                            else:
+
+                                st.error(
+                                    "❌ Windows EXE build failed."
+                                )
+
+                                run_url = (
+                                    found_run
+                                    .get(
+                                        "html_url",
+                                        ""
                                     )
                                 )
 
-                                st.info(
-                                    "Artifact ZIP download "
-                                    "hoga. Iske andar generated "
-                                    "EXE milega."
-                                )
+                                if run_url:
+                                    st.write(
+                                        f"GitHub Actions Run: "
+                                        f"{run_url}"
+                                    )
 
-                else:
+                                st.stop()
 
-                    st.error(
-                        "❌ EXE build failed."
-                    )
+                except Exception:
+                    pass
 
-                    st.write(
-                        f"Conclusion: `{conclusion}`"
-                    )
+                time.sleep(5)
 
-                st.session_state[
-                    "building"
-                ] = False
+            # -------------------------------------------------
+            # CHECK BUILD
+            # -------------------------------------------------
 
-            else:
+            if not found_run:
 
-                st.info(
-                    "⏳ EXE abhi build ho raha hai..."
+                st.error(
+                    "❌ Build run was not detected."
                 )
 
-                st.progress(
-                    50
+                st.stop()
+
+            conclusion = (
+                found_run.get(
+                    "conclusion"
+                )
+            )
+
+            if conclusion != "success":
+
+                st.error(
+                    "❌ EXE build failed."
                 )
 
-                if st.button(
-                    "🔄 Check Build Again"
+                st.stop()
+
+            progress.progress(1.0)
+
+            status.write(
+                "✅ Windows EXE build completed!"
+            )
+
+            # -------------------------------------------------
+            # DOWNLOAD ARTIFACT
+            # -------------------------------------------------
+
+            st.write(
+                "### 3️⃣ Preparing EXE download..."
+            )
+
+            run_id = found_run.get(
+                "id"
+            )
+
+            artifacts_url = (
+                f"{GITHUB_API}/repos/"
+                f"{GITHUB_OWNER}/"
+                f"{GITHUB_REPO}/"
+                f"actions/runs/"
+                f"{run_id}/artifacts"
+            )
+
+            try:
+
+                artifacts_response = (
+                    requests.get(
+                        artifacts_url,
+                        headers=headers,
+                        timeout=30
+                    )
+                )
+
+                if (
+                    artifacts_response
+                    .status_code != 200
                 ):
 
-                    st.rerun()
+                    st.error(
+                        "❌ Could not get build artifact."
+                    )
 
-    else:
+                    st.code(
+                        artifacts_response.text
+                    )
 
-        st.error(
-            "GitHub Actions status read nahi ho saka."
-        )
+                    st.stop()
+
+                artifacts = (
+                    artifacts_response
+                    .json()
+                    .get(
+                        "artifacts",
+                        []
+                    )
+                )
+
+                if not artifacts:
+
+                    st.error(
+                        "❌ No EXE artifact found."
+                    )
+
+                    st.stop()
+
+                artifact = artifacts[0]
+
+                artifact_id = artifact.get(
+                    "id"
+                )
+
+                download_url = (
+                    f"{GITHUB_API}/repos/"
+                    f"{GITHUB_OWNER}/"
+                    f"{GITHUB_REPO}/"
+                    f"actions/artifacts/"
+                    f"{artifact_id}/zip"
+                )
+
+                st.write(
+                    "Downloading build..."
+                )
+
+                artifact_response = (
+                    requests.get(
+                        download_url,
+                        headers=headers,
+                        timeout=120
+                    )
+                )
+
+                if (
+                    artifact_response
+                    .status_code != 200
+                ):
+
+                    st.error(
+                        "❌ Could not download artifact."
+                    )
+
+                    st.stop()
+
+                st.success(
+                    "🎉 EXE is ready!"
+                )
+
+                st.download_button(
+                    label="⬇️ Download Windows EXE",
+                    data=artifact_response.content,
+                    file_name=(
+                        f"{exe_name}.zip"
+                    ),
+                    mime="application/zip",
+                    use_container_width=True
+                )
+
+                st.info(
+                    "ZIP download ke andar Windows "
+                    "Portable EXE milega."
+                )
+
+            except Exception as e:
+
+                st.error(
+                    f"❌ Artifact download error: {e}"
+                )
+
+
+# =========================================================
+# FOOTER
+# =========================================================
+
+st.divider()
+
+st.caption(
+    "Biogene India ERP • SAP Business One Style ERP"
+)
