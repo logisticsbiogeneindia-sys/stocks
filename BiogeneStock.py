@@ -1,19 +1,15 @@
 import io
 import os
 import re
-import sys
-import shutil
+import base64
 import zipfile
-import tempfile
-import subprocess
-from pathlib import Path
-
+import requests
 import pandas as pd
 import streamlit as st
 
 
 # ============================================================
-# PAGE CONFIG
+# CONFIG
 # ============================================================
 
 st.set_page_config(
@@ -24,13 +20,31 @@ st.set_page_config(
 
 
 # ============================================================
-# HELPER FUNCTIONS
+# FUNCTIONS
 # ============================================================
 
+def safe_sheet_name(name):
+    name = str(name)
+
+    for ch in ['\\', '/', '*', '[', ']', ':', '?']:
+        name = name.replace(ch, "_")
+
+    name = name.strip()
+
+    if not name:
+        name = "Blank"
+
+    return name[:31]
+
+
 def safe_filename(name):
-    """Make a Windows-safe filename."""
     name = str(name).strip()
-    name = re.sub(r'[<>:"/\\|?*]', "_", name)
+
+    name = re.sub(
+        r'[<>:"/\\|?*]',
+        "_",
+        name
+    )
 
     if not name:
         name = "Biogene_India_ERP"
@@ -38,464 +52,12 @@ def safe_filename(name):
     return name
 
 
-def run_command(command, cwd, log_box=None):
-    """
-    Run command and stream output into Streamlit.
-    """
-
-    try:
-        process = subprocess.Popen(
-            command,
-            cwd=str(cwd),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            bufsize=1
-        )
-
-        logs = []
-
-        for line in iter(process.stdout.readline, ""):
-            line = line.rstrip()
-
-            if line:
-                logs.append(line)
-
-                if log_box is not None:
-                    log_box.code(
-                        "\n".join(logs[-100:]),
-                        language="text"
-                    )
-
-        process.wait()
-
-        return process.returncode, "\n".join(logs)
-
-    except FileNotFoundError as e:
-        return 999, f"Command not found: {e}"
-
-    except Exception as e:
-        return 999, str(e)
-
-
-def find_project_root(folder):
-    """
-    ZIP ke andar agar ek extra root folder ho,
-    to actual project folder detect karta hai.
-    """
-
-    folder = Path(folder)
-
-    # Direct project
-    project_files = [
-        "package.json",
-        "requirements.txt",
-        "pyproject.toml",
-        "main.py",
-        "app.py",
-        "index.html"
-    ]
-
-    for file in project_files:
-        if (folder / file).exists():
-            return folder
-
-    # One-level nested project
-    children = [
-        p for p in folder.iterdir()
-        if p.is_dir()
-    ]
-
-    for child in children:
-        for file in project_files:
-            if (child / file).exists():
-                return child
-
-    return folder
-
-
-def detect_project_type(project_root):
-    """
-    Detect Electron / Node / Python / HTML project.
-    """
-
-    project_root = Path(project_root)
-
-    package_json = project_root / "package.json"
-
-    if package_json.exists():
-        try:
-            import json
-
-            with open(package_json, "r", encoding="utf-8") as f:
-                package = json.load(f)
-
-            dependencies = {}
-
-            dependencies.update(
-                package.get("dependencies", {})
-            )
-
-            dependencies.update(
-                package.get("devDependencies", {})
-            )
-
-            scripts = package.get("scripts", {})
-
-            package_text = str(
-                package
-            ).lower()
-
-            if (
-                "electron" in dependencies
-                or "electron-builder" in dependencies
-                or "electron" in package_text
-                or "electron-builder" in package_text
-                or "electron" in str(scripts).lower()
-            ):
-                return "electron"
-
-            return "node"
-
-        except Exception:
-            return "node"
-
-    python_files = [
-        "main.py",
-        "app.py",
-        "run.py",
-        "server.py"
-    ]
-
-    if any((project_root / f).exists() for f in python_files):
-        return "python"
-
-    if (
-        (project_root / "requirements.txt").exists()
-        or (project_root / "pyproject.toml").exists()
-    ):
-        return "python"
-
-    if (project_root / "index.html").exists():
-        return "html"
-
-    return "unknown"
-
-
-def find_python_entry(project_root):
-    """
-    Python entry file detect karega.
-    """
-
-    preferred = [
-        "main.py",
-        "app.py",
-        "run.py",
-        "server.py"
-    ]
-
-    for file in preferred:
-        path = project_root / file
-
-        if path.exists():
-            return path
-
-    py_files = list(project_root.glob("*.py"))
-
-    if py_files:
-        return py_files[0]
-
-    return None
-
-
-def build_electron(project_root, exe_name, portable, log_box):
-
-    project_root = Path(project_root)
-
-    package_json = project_root / "package.json"
-
-    if not package_json.exists():
-        return False, "package.json nahi mila."
-
-    # --------------------------------------------------------
-    # Check npm
-    # --------------------------------------------------------
-
-    npm_command = "npm.cmd" if os.name == "nt" else "npm"
-
-    npm_check = shutil.which(npm_command)
-
-    if npm_check is None:
-        return False, (
-            "npm/Node.js available nahi hai. "
-            "Electron project ko EXE banane ke liye Node.js/npm "
-            "required hai."
-        )
-
-    # --------------------------------------------------------
-    # Install dependencies
-    # --------------------------------------------------------
-
-    st.info("📦 Installing Node dependencies...")
-
-    code, logs = run_command(
-        [npm_command, "install"],
-        project_root,
-        log_box
-    )
-
-    if code != 0:
-        return False, (
-            "npm install failed.\n\n" + logs
-        )
-
-    # --------------------------------------------------------
-    # Check electron-builder
-    # --------------------------------------------------------
-
-    import json
-
-    try:
-        with open(package_json, "r", encoding="utf-8") as f:
-            package = json.load(f)
-    except Exception as e:
-        return False, f"package.json read nahi ho saka: {e}"
-
-    dependencies = {}
-    dependencies.update(package.get("dependencies", {}))
-    dependencies.update(package.get("devDependencies", {}))
-
-    has_builder = "electron-builder" in dependencies
-
-    # --------------------------------------------------------
-    # Build command
-    # --------------------------------------------------------
-
-    st.info("⚙️ Building Windows EXE...")
-
-    if has_builder:
-
-        command = [
-            "npx",
-            "electron-builder",
-            "--win",
-            "--x64"
-        ]
-
-    else:
-
-        command = [
-            "npx",
-            "--yes",
-            "electron-builder",
-            "--win",
-            "--x64"
-        ]
-
-    if portable:
-        command.append("--portable")
-
-    code, logs = run_command(
-        command,
-        project_root,
-        log_box
-    )
-
-    if code != 0:
-        return False, (
-            "Electron build failed.\n\n" + logs
-        )
-
-    # --------------------------------------------------------
-    # Find EXE
-    # --------------------------------------------------------
-
-    dist_folder = project_root / "dist"
-
-    if not dist_folder.exists():
-        return False, "dist folder generate nahi hua."
-
-    exe_files = list(
-        dist_folder.rglob("*.exe")
-    )
-
-    if not exe_files:
-        return False, (
-            "Build complete hua lekin EXE nahi mila."
-        )
-
-    # Prefer portable EXE
-    portable_files = [
-        f for f in exe_files
-        if "portable" in f.name.lower()
-    ]
-
-    if portable and portable_files:
-        exe_file = portable_files[0]
-    else:
-        exe_file = exe_files[0]
-
-    # --------------------------------------------------------
-    # Rename EXE
-    # --------------------------------------------------------
-
-    desired_name = safe_filename(exe_name)
-
-    new_exe = exe_file.parent / (
-        desired_name + ".exe"
-    )
-
-    try:
-        if exe_file.resolve() != new_exe.resolve():
-
-            if new_exe.exists():
-                new_exe.unlink()
-
-            shutil.copy2(
-                exe_file,
-                new_exe
-            )
-
-            exe_file = new_exe
-
-    except Exception:
-        pass
-
-    return True, str(exe_file)
-
-
-def build_python(project_root, exe_name, log_box):
-
-    project_root = Path(project_root)
-
-    entry = find_python_entry(
-        project_root
-    )
-
-    if entry is None:
-        return False, "Python entry file nahi mila."
-
-    # --------------------------------------------------------
-    # Check PyInstaller
-    # --------------------------------------------------------
-
-    pyinstaller = shutil.which(
-        "pyinstaller"
-    )
-
-    if pyinstaller is None:
-
-        # Try python -m PyInstaller
-        python_exe = sys.executable
-
-        st.info(
-            "📦 PyInstaller check/install ho raha hai..."
-        )
-
-        code, logs = run_command(
-            [
-                python_exe,
-                "-m",
-                "PyInstaller",
-                "--version"
-            ],
-            project_root,
-            log_box
-        )
-
-        if code != 0:
-
-            st.info(
-                "PyInstaller install kiya ja raha hai..."
-            )
-
-            code, logs = run_command(
-                [
-                    python_exe,
-                    "-m",
-                    "pip",
-                    "install",
-                    "pyinstaller"
-                ],
-                project_root,
-                log_box
-            )
-
-            if code != 0:
-                return False, (
-                    "PyInstaller install nahi ho saka.\n\n"
-                    + logs
-                )
-
-        pyinstaller_command = [
-            python_exe,
-            "-m",
-            "PyInstaller"
-        ]
-
-    else:
-
-        pyinstaller_command = [
-            pyinstaller
-        ]
-
-    # --------------------------------------------------------
-    # Build
-    # --------------------------------------------------------
-
-    st.info(
-        f"⚙️ Building Python EXE: {entry.name}"
-    )
-
-    dist_dir = project_root / "dist"
-    build_dir = project_root / "build"
-
-    command = (
-        pyinstaller_command
-        + [
-            "--noconfirm",
-            "--clean",
-            "--onefile",
-            "--windowed",
-            "--name",
-            safe_filename(exe_name),
-            str(entry)
-        ]
-    )
-
-    code, logs = run_command(
-        command,
-        project_root,
-        log_box
-    )
-
-    if code != 0:
-        return False, (
-            "PyInstaller build failed.\n\n"
-            + logs
-        )
-
-    exe_file = (
-        dist_dir
-        / (safe_filename(exe_name) + ".exe")
-    )
-
-    if not exe_file.exists():
-
-        exe_files = list(
-            dist_dir.glob("*.exe")
-        )
-
-        if not exe_files:
-            return False, (
-                "Build complete hua lekin EXE nahi mila."
-            )
-
-        exe_file = exe_files[0]
-
-    return True, str(exe_file)
+def github_headers(token):
+    return {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28"
+    }
 
 
 # ============================================================
@@ -514,7 +76,7 @@ tool = st.sidebar.radio(
 
 
 # ============================================================
-# TOOL 1 — EXCEL SPLITTER
+# EXCEL SPLITTER
 # ============================================================
 
 if tool == "📄 Brand Wise Excel Splitter":
@@ -554,10 +116,7 @@ if tool == "📄 Brand Wise Excel Splitter":
 
             st.stop()
 
-        # ----------------------------------------------------
         # Find Brand column
-        # ----------------------------------------------------
-
         brand_col = None
 
         for col in df.columns:
@@ -598,9 +157,7 @@ if tool == "📄 Brand Wise Excel Splitter":
             type="primary"
         ):
 
-            progress = st.progress(
-                0
-            )
+            progress = st.progress(0)
 
             output = io.BytesIO()
 
@@ -616,35 +173,34 @@ if tool == "📄 Brand Wise Excel Splitter":
 
                 total = len(groups)
 
+                used_sheet_names = set()
+
                 for i, (brand, data) in enumerate(
                     groups,
                     start=1
                 ):
 
-                    sheet_name = str(
+                    sheet_name = safe_sheet_name(
                         brand
                     )
 
-                    for ch in [
-                        "\\",
-                        "/",
-                        "*",
-                        "[",
-                        "]",
-                        ":",
-                        "?"
-                    ]:
+                    # Avoid duplicate sheet names
+                    original_name = sheet_name
+                    counter = 1
+
+                    while sheet_name in used_sheet_names:
+
+                        suffix = f"_{counter}"
 
                         sheet_name = (
-                            sheet_name
-                            .replace(ch, "_")
+                            original_name[:31 - len(suffix)]
+                            + suffix
                         )
 
-                    if not sheet_name.strip():
-                        sheet_name = "Blank"
+                        counter += 1
 
-                    sheet_name = (
-                        sheet_name[:31]
+                    used_sheet_names.add(
+                        sheet_name
                     )
 
                     data.to_excel(
@@ -668,9 +224,7 @@ if tool == "📄 Brand Wise Excel Splitter":
             st.download_button(
                 label="⬇ Download Workbook",
                 data=output,
-                file_name=(
-                    "Brand_Wise_Workbook.xlsx"
-                ),
+                file_name="Brand_Wise_Workbook.xlsx",
                 mime=(
                     "application/"
                     "vnd.openxmlformats-officedocument."
@@ -680,31 +234,63 @@ if tool == "📄 Brand Wise Excel Splitter":
 
 
 # ============================================================
-# TOOL 2 — ZIP TO EXE
+# ZIP → EXE
 # ============================================================
 
 else:
 
     st.title(
-        "🛠️ ZIP → Windows EXE Builder"
+        "🛠️ Biogene India ZIP → EXE Builder"
     )
 
     st.write(
-        "Upload your Biogene India project ZIP and "
-        "build a Windows EXE."
+        "Upload your Biogene India ERP ZIP and "
+        "create a Windows Portable EXE."
     )
 
-    st.warning(
-        "⚠️ ZIP ke andar buildable project hona chahiye. "
-        "Electron project ke liye Node.js/npm aur "
-        "Python project ke liye Python/PyInstaller "
-        "required ho sakte hain."
+    st.info(
+        "💡 EXE Windows build machine par automatically "
+        "banega. Aapko apne PC par Node.js install "
+        "karne ki zarurat nahi hai."
     )
+
+    # --------------------------------------------------------
+    # GitHub Settings
+    # --------------------------------------------------------
+
+    with st.expander(
+        "⚙️ Build Configuration",
+        expanded=True
+    ):
+
+        github_token = st.text_input(
+            "GitHub Personal Access Token",
+            type="password",
+            help=(
+                "GitHub Actions ko build start karne ke "
+                "liye token required hai."
+            )
+        )
+
+        github_owner = st.text_input(
+            "GitHub Username / Organization",
+            value=""
+        )
+
+        github_repo = st.text_input(
+            "GitHub Repository",
+            value=""
+        )
+
+        exe_name = st.text_input(
+            "EXE Name",
+            value="Biogene_India_ERP"
+        )
 
     zip_file = st.file_uploader(
         "Upload Biogene India ZIP",
         type=["zip"],
-        key="exe_zip"
+        key="biogene_zip"
     )
 
     if zip_file is not None:
@@ -713,271 +299,349 @@ else:
             f"✅ ZIP selected: {zip_file.name}"
         )
 
-        default_name = Path(
-            zip_file.name
-        ).stem
-
-        exe_name = st.text_input(
-            "EXE File Name",
-            value=default_name
+        st.write(
+            f"File size: "
+            f"{zip_file.size / (1024 * 1024):.2f} MB"
         )
 
-        build_mode = st.selectbox(
-            "Build Mode",
-            [
-                "Portable EXE",
-                "Normal EXE"
-            ]
-        )
-
-        portable = (
-            build_mode
-            == "Portable EXE"
-        )
-
-        if st.button(
-            "🚀 Build EXE",
+        build_button = st.button(
+            "🚀 Build Windows Portable EXE",
             type="primary"
-        ):
+        )
+
+        if build_button:
+
+            if not github_token:
+                st.error(
+                    "❌ GitHub Token enter karo."
+                )
+                st.stop()
+
+            if not github_owner:
+                st.error(
+                    "❌ GitHub Username/Organization enter karo."
+                )
+                st.stop()
+
+            if not github_repo:
+                st.error(
+                    "❌ GitHub Repository enter karo."
+                )
+                st.stop()
+
+            exe_name = safe_filename(
+                exe_name
+            )
 
             # ------------------------------------------------
-            # Temporary working directory
+            # GitHub API
             # ------------------------------------------------
 
-            work_dir = Path(
-                tempfile.mkdtemp(
-                    prefix="biogene_exe_"
-                )
+            api_base = (
+                "https://api.github.com/repos/"
+                f"{github_owner}/{github_repo}"
             )
 
-            extract_dir = (
-                work_dir / "project"
+            headers = github_headers(
+                github_token
             )
 
-            extract_dir.mkdir(
-                parents=True,
-                exist_ok=True
+            # ------------------------------------------------
+            # Check repository
+            # ------------------------------------------------
+
+            with st.spinner(
+                "Checking GitHub repository..."
+            ):
+
+                response = requests.get(
+                    api_base,
+                    headers=headers,
+                    timeout=30
+                )
+
+            if response.status_code != 200:
+
+                st.error(
+                    "❌ GitHub repository access failed."
+                )
+
+                st.code(
+                    response.text
+                )
+
+                st.stop()
+
+            st.success(
+                "✅ GitHub repository connected."
             )
 
-            try:
+            # ------------------------------------------------
+            # Convert ZIP to Base64
+            # ------------------------------------------------
 
-                # --------------------------------------------
-                # Save uploaded ZIP
-                # --------------------------------------------
+            with st.spinner(
+                "Preparing ZIP..."
+            ):
 
-                zip_path = (
-                    work_dir / "project.zip"
+                zip_bytes = (
+                    zip_file.getvalue()
                 )
 
-                with open(
-                    zip_path,
-                    "wb"
-                ) as f:
-
-                    f.write(
-                        zip_file.getbuffer()
+                encoded_zip = (
+                    base64.b64encode(
+                        zip_bytes
                     )
-
-                st.info(
-                    "📦 Extracting ZIP..."
+                    .decode("utf-8")
                 )
 
-                # --------------------------------------------
-                # Extract safely
-                # --------------------------------------------
+            # ------------------------------------------------
+            # Create unique build ID
+            # ------------------------------------------------
 
-                with zipfile.ZipFile(
-                    zip_path,
-                    "r"
-                ) as z:
+            import time
 
-                    # Zip Slip protection
-                    for member in z.infolist():
+            build_id = str(
+                int(time.time())
+            )
 
-                        target = (
-                            extract_dir
-                            / member.filename
-                        )
+            payload = {
+                "event_type": "biogene-build",
+                "client_payload": {
+                    "zip_base64": encoded_zip,
+                    "exe_name": exe_name,
+                    "build_id": build_id
+                }
+            }
 
-                        target_resolved = (
-                            target.resolve()
-                        )
+            # ------------------------------------------------
+            # Trigger GitHub Actions
+            # ------------------------------------------------
 
-                        if not str(
-                            target_resolved
-                        ).startswith(
-                            str(
-                                extract_dir.resolve()
-                            )
-                        ):
+            st.info(
+                "🚀 Windows EXE build start ho raha hai..."
+            )
 
-                            raise Exception(
-                                "Unsafe ZIP path detected."
-                            )
+            dispatch_url = (
+                api_base
+                + "/dispatches"
+            )
 
-                    z.extractall(
-                        extract_dir
-                    )
+            response = requests.post(
+                dispatch_url,
+                headers=headers,
+                json=payload,
+                timeout=60
+            )
 
-                # --------------------------------------------
-                # Find actual project root
-                # --------------------------------------------
+            if response.status_code not in [
+                200,
+                201,
+                204
+            ]:
 
-                project_root = (
-                    find_project_root(
-                        extract_dir
-                    )
+                st.error(
+                    "❌ Build trigger nahi hua."
                 )
 
-                st.write(
-                    f"📁 Project folder: "
-                    f"`{project_root}`"
+                st.code(
+                    response.text
                 )
 
-                # --------------------------------------------
-                # Detect type
-                # --------------------------------------------
+                st.stop()
 
-                project_type = (
-                    detect_project_type(
-                        project_root
-                    )
-                )
+            st.success(
+                "✅ Build request successfully sent!"
+            )
 
-                if project_type == "electron":
+            st.session_state[
+                "build_id"
+            ] = build_id
+
+            st.session_state[
+                "building"
+            ] = True
+
+            st.session_state[
+                "github_owner"
+            ] = github_owner
+
+            st.session_state[
+                "github_repo"
+            ] = github_repo
+
+            st.session_state[
+                "github_token"
+            ] = github_token
+
+            st.rerun()
+
+
+# ============================================================
+# BUILD STATUS
+# ============================================================
+
+if (
+    st.session_state.get(
+        "building",
+        False
+    )
+):
+
+    st.divider()
+
+    st.subheader(
+        "🔄 Build Status"
+    )
+
+    token = st.session_state.get(
+        "github_token"
+    )
+
+    owner = st.session_state.get(
+        "github_owner"
+    )
+
+    repo = st.session_state.get(
+        "github_repo"
+    )
+
+    api_base = (
+        "https://api.github.com/repos/"
+        f"{owner}/{repo}"
+    )
+
+    headers = github_headers(
+        token
+    )
+
+    # Get latest workflow runs
+    runs_url = (
+        api_base
+        + "/actions/runs"
+        "?per_page=10"
+    )
+
+    response = requests.get(
+        runs_url,
+        headers=headers,
+        timeout=30
+    )
+
+    if response.status_code == 200:
+
+        runs = response.json().get(
+            "workflow_runs",
+            []
+        )
+
+        if runs:
+
+            latest = runs[0]
+
+            status = latest.get(
+                "status"
+            )
+
+            conclusion = latest.get(
+                "conclusion"
+            )
+
+            st.write(
+                f"**Status:** `{status}`"
+            )
+
+            if status == "completed":
+
+                if conclusion == "success":
 
                     st.success(
-                        "🟢 Project type detected: "
-                        "Electron"
+                        "🎉 EXE build successfully completed!"
                     )
 
-                elif project_type == "node":
+                    # ----------------------------------------
+                    # Download artifacts
+                    # ----------------------------------------
 
-                    st.warning(
-                        "🟡 Project type detected: "
-                        "Node.js"
+                    run_id = latest.get(
+                        "id"
                     )
 
-                elif project_type == "python":
-
-                    st.success(
-                        "🟢 Project type detected: "
-                        "Python"
+                    artifact_url = (
+                        api_base
+                        + f"/actions/runs/"
+                        f"{run_id}/artifacts"
                     )
 
-                elif project_type == "html":
-
-                    st.warning(
-                        "🟡 HTML project detected. "
-                        "HTML ko directly EXE banane ke "
-                        "liye Electron wrapper required hai."
-                    )
-
-                else:
-
-                    st.error(
-                        "❌ Project type detect nahi hua."
-                    )
-
-                    st.info(
-                        "ZIP mein package.json, main.py, "
-                        "app.py, requirements.txt ya "
-                        "index.html hona chahiye."
-                    )
-
-                    st.stop()
-
-                # --------------------------------------------
-                # Build log
-                # --------------------------------------------
-
-                st.subheader(
-                    "📋 Build Log"
-                )
-
-                log_box = st.empty()
-
-                # --------------------------------------------
-                # BUILD
-                # --------------------------------------------
-
-                if project_type == "electron":
-
-                    success, result = (
-                        build_electron(
-                            project_root,
-                            exe_name,
-                            portable,
-                            log_box
+                    artifact_response = (
+                        requests.get(
+                            artifact_url,
+                            headers=headers,
+                            timeout=30
                         )
                     )
 
-                elif project_type == "python":
+                    if (
+                        artifact_response.status_code
+                        == 200
+                    ):
 
-                    success, result = (
-                        build_python(
-                            project_root,
-                            exe_name,
-                            log_box
-                        )
-                    )
-
-                else:
-
-                    success = False
-
-                    result = (
-                        "Node/HTML project ko "
-                        "automatic EXE packaging ke liye "
-                        "Electron configuration required hai."
-                    )
-
-                # --------------------------------------------
-                # RESULT
-                # --------------------------------------------
-
-                if success:
-
-                    exe_path = Path(
-                        result
-                    )
-
-                    if not exe_path.exists():
-
-                        st.error(
-                            "❌ EXE file locate nahi hui."
-                        )
-
-                    else:
-
-                        st.success(
-                            "🎉 EXE successfully created!"
-                        )
-
-                        st.write(
-                            f"**EXE:** `{exe_path.name}`"
-                        )
-
-                        with open(
-                            exe_path,
-                            "rb"
-                        ) as f:
-
-                            exe_data = f.read()
-
-                        st.download_button(
-                            label=(
-                                "⬇️ Download EXE"
-                            ),
-                            data=exe_data,
-                            file_name=(
-                                exe_path.name
-                            ),
-                            mime=(
-                                "application/"
-                                "vnd.microsoft.portable-executable"
+                        artifacts = (
+                            artifact_response
+                            .json()
+                            .get(
+                                "artifacts",
+                                []
                             )
                         )
+
+                        if artifacts:
+
+                            artifact = (
+                                artifacts[0]
+                            )
+
+                            download_url = (
+                                artifact.get(
+                                    "archive_download_url"
+                                )
+                            )
+
+                            download_response = (
+                                requests.get(
+                                    download_url,
+                                    headers=headers,
+                                    timeout=120
+                                )
+                            )
+
+                            if (
+                                download_response.status_code
+                                == 200
+                            ):
+
+                                st.download_button(
+                                    label=(
+                                        "⬇️ Download "
+                                        "Biogene India EXE"
+                                    ),
+                                    data=(
+                                        download_response
+                                        .content
+                                    ),
+                                    file_name=(
+                                        "Biogene_India_EXE.zip"
+                                    ),
+                                    mime=(
+                                        "application/zip"
+                                    )
+                                )
+
+                                st.info(
+                                    "Artifact ZIP download "
+                                    "hoga. Iske andar generated "
+                                    "EXE milega."
+                                )
 
                 else:
 
@@ -985,35 +649,32 @@ else:
                         "❌ EXE build failed."
                     )
 
-                    st.code(
-                        result,
-                        language="text"
+                    st.write(
+                        f"Conclusion: `{conclusion}`"
                     )
 
-            except zipfile.BadZipFile:
+                st.session_state[
+                    "building"
+                ] = False
 
-                st.error(
-                    "❌ Invalid ZIP file."
+            else:
+
+                st.info(
+                    "⏳ EXE abhi build ho raha hai..."
                 )
 
-            except Exception as e:
-
-                st.error(
-                    f"❌ Error: {e}"
+                st.progress(
+                    50
                 )
 
-            finally:
+                if st.button(
+                    "🔄 Check Build Again"
+                ):
 
-                # --------------------------------------------
-                # Cleanup
-                # --------------------------------------------
+                    st.rerun()
 
-                try:
+    else:
 
-                    shutil.rmtree(
-                        work_dir,
-                        ignore_errors=True
-                    )
-
-                except Exception:
-                    pass
+        st.error(
+            "GitHub Actions status read nahi ho saka."
+        )
