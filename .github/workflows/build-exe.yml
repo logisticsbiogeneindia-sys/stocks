@@ -1,1 +1,197 @@
+name: Biogene India EXE Builder
 
+on:
+  repository_dispatch:
+    types:
+      - biogene-build
+
+jobs:
+
+  build:
+
+    runs-on: windows-latest
+
+    steps:
+
+      # ======================================================
+      # CHECKOUT
+      # ======================================================
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+
+      # ======================================================
+      # CREATE ZIP FILE
+      # ======================================================
+
+      - name: Create project ZIP
+        shell: pwsh
+        env:
+          ZIP_BASE64: ${{ github.event.client_payload.zip_base64 }}
+        run: |
+
+          $bytes = [Convert]::FromBase64String(
+            $env:ZIP_BASE64
+          )
+
+          [IO.File]::WriteAllBytes(
+            "$env:GITHUB_WORKSPACE\project.zip",
+            $bytes
+          )
+
+
+      # ======================================================
+      # EXTRACT ZIP
+      # ======================================================
+
+      - name: Extract project
+        shell: pwsh
+        run: |
+
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path project | Out-Null
+
+          Expand-Archive `
+            -Path project.zip `
+            -DestinationPath project `
+            -Force
+
+
+      # ======================================================
+      # SETUP NODE
+      # ======================================================
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: project/package-lock.json
+
+
+      # ======================================================
+      # FIND PROJECT ROOT
+      # ======================================================
+
+      - name: Detect project root
+        shell: pwsh
+        run: |
+
+          $package = Get-ChildItem `
+            -Path project `
+            -Filter package.json `
+            -Recurse `
+            -File |
+            Select-Object -First 1
+
+          if ($null -eq $package) {
+
+            Write-Host "package.json not found"
+
+            exit 1
+          }
+
+          $root = $package.Directory.FullName
+
+          "PROJECT_ROOT=$root" |
+            Out-File `
+            -FilePath $env:GITHUB_ENV `
+            -Append
+
+
+      # ======================================================
+      # INSTALL DEPENDENCIES
+      # ======================================================
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+
+          Set-Location "$env:PROJECT_ROOT"
+
+          if (Test-Path "package-lock.json") {
+
+            npm ci
+
+          } else {
+
+            npm install
+          }
+
+
+      # ======================================================
+      # INSTALL ELECTRON BUILDER
+      # ======================================================
+
+      - name: Install Electron Builder
+        shell: pwsh
+        run: |
+
+          Set-Location "$env:PROJECT_ROOT"
+
+          npm install --save-dev electron-builder
+
+
+      # ======================================================
+      # BUILD WINDOWS PORTABLE EXE
+      # ======================================================
+
+      - name: Build Portable EXE
+        shell: pwsh
+        env:
+          EXE_NAME: ${{ github.event.client_payload.exe_name }}
+        run: |
+
+          Set-Location "$env:PROJECT_ROOT"
+
+          npx electron-builder `
+            --win `
+            --x64 `
+            --portable `
+            -c.productName="$env:EXE_NAME"
+
+
+      # ======================================================
+      # FIND EXE
+      # ======================================================
+
+      - name: Find EXE
+        shell: pwsh
+        run: |
+
+          $exe = Get-ChildItem `
+            -Path "$env:PROJECT_ROOT\dist" `
+            -Filter *.exe `
+            -Recurse `
+            -File |
+            Select-Object -First 1
+
+          if ($null -eq $exe) {
+
+            Write-Host "EXE not found"
+
+            exit 1
+          }
+
+          Write-Host "EXE FOUND:"
+          Write-Host $exe.FullName
+
+          "EXE_PATH=$($exe.FullName)" |
+            Out-File `
+            -FilePath $env:GITHUB_ENV `
+            -Append
+
+
+      # ======================================================
+      # UPLOAD EXE
+      # ======================================================
+
+      - name: Upload EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: Biogene-India-EXE
+          path: ${{ env.EXE_PATH }}
+          retention-days: 1
