@@ -9,4 +9,5 @@ fuzzywuzzy
 bcrypt
 gdown
 plotly
-xlsxwriter 
+xlsxwriter
+xlrd>=2.0.1
