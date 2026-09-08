@@ -1,80 +1,88 @@
-import io
-import pandas as pd
 import streamlit as st
+from pathlib import Path
+import tempfile
+
+from short_video_creator import Settings, create_short
 
 st.set_page_config(
-    page_title="Brand Wise Splitter",
-    page_icon="📄",
-    layout="centered"
+    page_title="AI Short Video Creator",
+    page_icon="🎬",
+    layout="wide"
 )
 
-st.title("📄 Brand Wise Worksheet Splitter")
-st.write("Upload an Excel file and split it into worksheets based on the **Brand** column.")
+st.title("🎬 AI Short Video Creator")
+st.write("Create Shorts with automatic AI captions and background videos.")
 
-uploaded_file = st.file_uploader(
-    "Choose Excel File",
-    type=["xlsx", "xls"]
+uploaded_video = st.file_uploader(
+    "Upload Main Video",
+    type=["mp4", "mov", "mkv", "avi", "webm"]
 )
 
-if uploaded_file is not None:
+uploaded_background = st.file_uploader(
+    "Upload Background Video",
+    type=["mp4", "mov", "mkv", "avi", "webm"]
+)
 
-    with st.spinner("Reading Excel..."):
-        df = pd.read_excel(uploaded_file, dtype=object)
+font_size = st.slider(
+    "Caption Font Size",
+    min_value=40,
+    max_value=180,
+    value=120
+)
 
-    # Find Brand column (case-insensitive)
-    brand_col = None
-    for col in df.columns:
-        if str(col).strip().lower() == "brand":
-            brand_col = col
-            break
+if st.button("🚀 Create Short", type="primary"):
 
-    if brand_col is None:
-        st.error("❌ Brand column not found.")
+    if uploaded_video is None:
+        st.error("Please upload a main video.")
         st.stop()
 
-    st.success(f"✅ Found Brand column: {brand_col}")
+    if uploaded_background is None:
+        st.error("Please upload a background video.")
+        st.stop()
 
-    st.write(f"Rows : **{len(df):,}**")
-    st.write(f"Unique Brands : **{df[brand_col].fillna('Blank').nunique()}**")
+    with tempfile.TemporaryDirectory() as temp_dir:
 
-    if st.button("Split Workbook"):
+        temp = Path(temp_dir)
 
-        progress = st.progress(0)
+        input_video = temp / uploaded_video.name
+        background_dir = temp / "backgrounds"
+        output_dir = temp / "output"
 
-        output = io.BytesIO()
+        background_dir.mkdir()
+        output_dir.mkdir()
 
-        with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        input_video.write_bytes(uploaded_video.getbuffer())
 
-            groups = df.groupby(df[brand_col].fillna("Blank"), sort=True)
+        background_file = background_dir / uploaded_background.name
+        background_file.write_bytes(
+            uploaded_background.getbuffer()
+        )
 
-            total = len(groups)
+        output_file = output_dir / "short.mp4"
 
-            for i, (brand, data) in enumerate(groups, start=1):
+        try:
+            with st.spinner("🎬 Creating your short..."):
 
-                sheet_name = str(brand)
-
-                for ch in ['\\', '/', '*', '[', ']', ':', '?']:
-                    sheet_name = sheet_name.replace(ch, "_")
-
-                sheet_name = sheet_name[:31]
-
-                data.to_excel(
-                    writer,
-                    sheet_name=sheet_name,
-                    index=False
+                result = create_short(
+                    input_video=str(input_video),
+                    output_path=str(output_file),
+                    backgrounds_dir=str(background_dir),
+                    settings=Settings(
+                        font_size=font_size
+                    )
                 )
 
-                progress.progress(i / total)
+            st.success("✅ Short created successfully!")
 
-        output.seek(0)
+            st.video(str(result))
 
-        progress.empty()
+            with open(result, "rb") as f:
+                st.download_button(
+                    "⬇️ Download Short",
+                    f,
+                    file_name="short.mp4",
+                    mime="video/mp4"
+                )
 
-        st.success("✅ Workbook created successfully!")
-
-        st.download_button(
-            label="⬇ Download Workbook",
-            data=output,
-            file_name="Brand_Wise_Workbook.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+        except Exception as e:
+            st.error(f"Video creation failed: {e}")
